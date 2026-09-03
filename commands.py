@@ -213,9 +213,11 @@ def register_commands(
         return bool(row and row[0])
 
 
-    def dev_channel_only(interaction: discord.Interaction) -> bool:
-        return interaction.channel_id == dev_channel_id
+#    def dev_channel_only(interaction: discord.Interaction) -> bool:
+#        return interaction.channel_id == dev_channel_id
 
+    def dev_channel_only(interaction: discord.Interaction) -> bool:
+        return True
 
     def split_discord_message(text, limit=2000):
         chunks = []

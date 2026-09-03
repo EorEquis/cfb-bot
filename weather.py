@@ -3,6 +3,8 @@ import json
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from urllib.request import urlopen
+import ssl
+import certifi
 
 from dotenv import load_dotenv
 
@@ -95,8 +97,9 @@ def get_forecast(match_date, first_tee_time):
         "https://api.open-meteo.com/v1/forecast?"
         + urlencode(params)
     )
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
 
-    with urlopen(url, timeout=10) as response:
+    with urlopen(url, timeout=10, context=ssl_context) as response:
         data = json.load(response)
 
     hourly = data["hourly"]
