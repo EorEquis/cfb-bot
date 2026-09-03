@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 def register_commands(
     bot,
+    bot_version,
     dev_guild,
     dev_channel_id,
     admin_discord_id,
@@ -504,7 +505,7 @@ def register_commands(
         )
 
         lines = [
-            f"📖 **CFB Bot v{BOT_VERSION} Commands**",
+            f"📖 **CFB Bot v{bot_version} Commands**",
             ""
         ]
 
