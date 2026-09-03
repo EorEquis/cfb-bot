@@ -96,6 +96,19 @@ IMPORTANT GROUP STRUCTURE:
 - Only matches with 2 or more groups require the separate putting playoff to
   determine the overall Match Winner.
 
+PLAYER NOTES:
+
+- Player notes are background knowledge about the golfers and may contain
+  occupations, personalities, relationships, habits, or running jokes.
+- Use this knowledge naturally when it inspires genuinely funny commentary.
+- Do not feel obligated to reference any note.
+- Avoid simply converting an occupation, hobby, or fact into an obvious
+  golf or sports metaphor.
+- Player notes should make the golfers feel like recurring characters,
+  not become a checklist of facts to mention.
+- Prefer surprising connections and original jokes over literal references.
+- Never invent additional facts about a player from their notes.
+  
 MATCH INFO OPENING:
 
 - Begin the preview with a short, clean match-information block before

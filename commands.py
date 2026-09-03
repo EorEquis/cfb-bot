@@ -1,10 +1,11 @@
 import mysql.connector
 import discord
 from discord import app_commands
-from sheets import get_latest_match_with_history, get_preview_data, get_player_profile
+from sheets import get_latest_match_with_history, get_preview_data, get_player_profile, get_power_data
 from wrapup import generate_wrapup
 from preview import generate_preview
 from weather import get_forecast, weather_emoji, format_time
+from power import generate_power
 
 
 def register_commands(
@@ -888,6 +889,95 @@ def register_commands(
         )
 
     @bot.tree.command(
+        name="power",
+        description="Show the latest CFB Sports Network power rankings",
+        guild=dev_guild
+    )
+    @admin_only
+    async def power(interaction: discord.Interaction):
+        usage_id = log_bot_usage(
+            "power",
+            interaction.user.id
+        )
+
+        if not dev_channel_only(interaction):
+            await interaction.response.send_message(
+                "CFB Bot is currently restricted to #cfb-bot-dev.",
+                ephemeral=True
+            )
+            return
+
+        if not bot_admin_only(interaction.user.id):
+            await interaction.response.send_message(
+                "You are not authorized to use this command.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            "📡 **CFB Sports Network is convening the completely unbiased ranking committee...**"
+        )
+
+        conn = mysql.connector.connect(
+            host=mysql_host,
+            port=mysql_port,
+            user=mysql_user,
+            password=mysql_password,
+            database=mysql_database
+        )
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT player_name
+            FROM players
+            WHERE active = TRUE
+            ORDER BY player_name
+            """
+        )
+
+        player_names = [
+            row[0]
+            for row in cursor.fetchall()
+        ]
+
+        cursor.close()
+        conn.close()
+
+        power_data = get_power_data(player_names)
+
+        try:
+            mark_bot_usage_api_call(usage_id)
+
+            result = await generate_power(power_data)
+
+            update_bot_usage_tokens(
+                usage_id,
+                result["input_tokens"],
+                result["output_tokens"]
+            )
+
+        except Exception as e:
+            print(f"POWER ERROR: {e}")
+
+            await interaction.edit_original_response(
+                content="CFB Sports Network suffered an internal ranking committee scandal."
+            )
+            return
+
+        chunks = split_discord_message(
+            result["text"]
+        )
+
+        await interaction.edit_original_response(
+            content=chunks[0]
+        )
+
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk)
+
+    @bot.tree.command(
         name="preview",
         description="Get the CFB Sports Network preview for the next match",
         guild=dev_guild
@@ -993,6 +1083,27 @@ def register_commands(
             for row in cursor.fetchall()
         ]
 
+        cursor.execute(
+            """
+            SELECT
+                player_name,
+                notes
+            FROM players
+            WHERE active = TRUE
+            AND player_name IN ({})
+            AND notes IS NOT NULL
+            AND TRIM(notes) <> ''
+            """.format(
+                ",".join(["%s"] * len(player_names))
+            ),
+            tuple(player_names)
+        )
+
+        player_notes = {
+            player_name: notes
+            for player_name, notes in cursor.fetchall()
+        }
+
         cursor.close()
         connection.close()
 
@@ -1015,6 +1126,8 @@ def register_commands(
                 location,
                 tee_times
             )
+
+            preview_data["Player Notes"] = player_notes
 
             mark_bot_usage_api_call(usage_id)
 
@@ -1368,6 +1481,38 @@ def register_commands(
 
         try:
             match_data = get_latest_match_with_history()
+
+            conn = mysql.connector.connect(
+                host=mysql_host,
+                port=mysql_port,
+                user=mysql_user,
+                password=mysql_password,
+                database=mysql_database
+            )
+
+            cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT
+                    player_name,
+                    notes
+                FROM players
+                WHERE active = TRUE
+                AND notes IS NOT NULL
+                AND TRIM(notes) <> ''
+                """
+            )
+
+            player_notes = {
+                player_name: notes
+                for player_name, notes in cursor.fetchall()
+            }
+
+            cursor.close()
+            conn.close()
+
+            match_data["Player Notes"] = player_notes            
 
             mark_bot_usage_api_call(usage_id)
 

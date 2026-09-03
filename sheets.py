@@ -7,6 +7,70 @@ load_dotenv()
 
 SPREADSHEET_ID = os.getenv("CFB_SHEET_ID")
 
+def get_power_data(player_names):
+    matches_df = get_matches()
+    players_df = get_players()
+
+    players = []
+
+    for name in player_names:
+        history = matches_df[
+            matches_df["Player"] == name
+        ].sort_values("MatchID")
+
+        player_record = players_df[
+            players_df["Player Name"].str.strip().str.lower()
+            == name.strip().lower()
+        ]
+
+        normalized_index = None
+
+        if not player_record.empty:
+            value = player_record.iloc[0]["Normalized CFB Index"]
+
+            if pd.notna(value):
+                normalized_index = float(value)
+
+        recent_performances = (
+            history["Match Performance"]
+            .dropna()
+            .tail(3)
+            .tolist()
+        )
+
+        players.append({
+            "Player": name,
+            "Normalized CFB Index": normalized_index,
+            "Matches Played": len(history),
+            "Total Points": float(
+                history["Player Points"].fillna(0).sum()
+            ),
+            "Group Wins": int(
+                history["Group Winner"].fillna(0).sum()
+            ),
+            "Match Wins": int(
+                history["Match Winner"].fillna(0).sum()
+            ),
+            "Recent Performances": [
+                float(value)
+                for value in recent_performances
+            ]
+        })
+
+    match_winners = matches_df[
+        matches_df["Match Winner"] == 1
+    ].sort_values("MatchID")
+
+    current_holder = None
+
+    if not match_winners.empty:
+        current_holder = match_winners.iloc[-1]["Player"]
+
+    return {
+        "Players": players,
+        "Current CFB Holder": current_holder
+    }
+    
 def get_players():
     url = (
         f"https://docs.google.com/spreadsheets/d/"
