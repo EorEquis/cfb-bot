@@ -57,17 +57,17 @@ class DatabaseLogHandler(logging.Handler):
         self.mysql_password = mysql_password
         self.mysql_database = mysql_database
 
-def emit(self, record):
-    try:
-        write_log(
-            self.mysql_host,
-            self.mysql_port,
-            self.mysql_user,
-            self.mysql_password,
-            self.mysql_database,
-            record.levelname,
-            record.getMessage(),
-            record.name
-        )
-    except Exception as e:
-        print(f"LOGGING ERROR: {e}")
+    def emit(self, record):
+        try:
+            write_log(
+                self.mysql_host,
+                self.mysql_port,
+                self.mysql_user,
+                self.mysql_password,
+                self.mysql_database,
+                record.levelname,
+                record.getMessage(),
+                record.name
+            )
+        except Exception as e:
+            print(f"LOGGING ERROR: {e}")
