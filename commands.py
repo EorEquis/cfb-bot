@@ -504,7 +504,7 @@ def register_commands(
         )
 
         lines = [
-            "📖 **CFB Bot Commands**",
+            f"📖 **CFB Bot v{BOT_VERSION} Commands**",
             ""
         ]
 

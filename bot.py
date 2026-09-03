@@ -18,6 +18,8 @@ LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, None)
 if not isinstance(LOG_LEVEL, int):
     raise ValueError(f"Invalid logging level: {LOG_LEVEL_NAME}")
 
+BOT_VERSION = "1.1.0-dev"
+
 TOKEN = os.getenv("DISCORD_TOKEN")
 DEV_CHANNEL_ID = int(os.getenv("DEV_CHANNEL_ID"))
 GUILD_ID = int(os.getenv("GUILD_ID"))
@@ -81,8 +83,8 @@ register_commands(
 
 @bot.event
 async def on_ready():
-    print(f"CFB Bot is online as {bot.user}")
-    logger.info(f"CFB Bot is online as {bot.user}")
+    logger.info(f"CFB Bot v{BOT_VERSION} is online as {bot.user}")
+    print(f"CFB Bot v{BOT_VERSION} is online as {bot.user}")
     
 @bot.event
 async def on_resumed():
