@@ -70,6 +70,7 @@ class CFBBot(discord.Client):
 bot = CFBBot()
 register_commands(
     bot,
+    BOT_VERSION,
     DEV_GUILD,
     DEV_CHANNEL_ID,
     ADMIN_DISCORD_ID,
