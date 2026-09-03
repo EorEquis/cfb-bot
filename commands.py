@@ -14,7 +14,6 @@ def register_commands(
     bot,
     bot_version,
     dev_guild,
-    dev_channel_id,
     admin_discord_id,
     mysql_host,
     mysql_port,
@@ -215,9 +214,6 @@ def register_commands(
 
         return bool(row and row[0])
 
-
-#    def dev_channel_only(interaction: discord.Interaction) -> bool:
-#        return interaction.channel_id == dev_channel_id
 
     def dev_channel_only(interaction: discord.Interaction) -> bool:
         return True
