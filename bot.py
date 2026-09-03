@@ -1,10 +1,22 @@
 import os
 import discord
+import sys
+import logging
 from discord import app_commands
 from dotenv import load_dotenv
 from commands import register_commands
+from app_log import DatabaseLogHandler
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+LOG_LEVEL_NAME = sys.argv[1].upper() if len(sys.argv) > 1 else "INFO"
+
+LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, None)
+
+if not isinstance(LOG_LEVEL, int):
+    raise ValueError(f"Invalid logging level: {LOG_LEVEL_NAME}")
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 DEV_CHANNEL_ID = int(os.getenv("DEV_CHANNEL_ID"))
@@ -15,6 +27,19 @@ MYSQL_USER = os.getenv("MYSQL_USER")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
 ADMIN_DISCORD_ID = int(os.getenv("ADMIN_DISCORD_ID"))
+
+db_log_handler = DatabaseLogHandler(
+    MYSQL_HOST,
+    MYSQL_PORT,
+    MYSQL_USER,
+    MYSQL_PASSWORD,
+    MYSQL_DATABASE
+)
+
+db_log_handler.setLevel(LOG_LEVEL)
+
+logging.getLogger().addHandler(db_log_handler)
+logging.getLogger().setLevel(LOG_LEVEL)
 
 intents = discord.Intents.default()
 intents.members = True
@@ -57,5 +82,14 @@ register_commands(
 @bot.event
 async def on_ready():
     print(f"CFB Bot is online as {bot.user}")
+    logger.info(f"CFB Bot is online as {bot.user}")
+    
+@bot.event
+async def on_resumed():
+    logger.info("Discord session resumed")
 
-bot.run(TOKEN)
+@bot.event
+async def on_disconnect():
+    logger.warning("Disconnected from Discord")
+        
+bot.run(TOKEN, log_handler=None)

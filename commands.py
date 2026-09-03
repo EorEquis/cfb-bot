@@ -1,5 +1,6 @@
 import mysql.connector
 import discord
+import logging
 from discord import app_commands
 from sheets import get_latest_match_with_history, get_preview_data, get_player_profile, get_power_data
 from wrapup import generate_wrapup
@@ -7,6 +8,7 @@ from preview import generate_preview
 from weather import get_forecast, weather_emoji, format_time
 from power import generate_power
 
+logger = logging.getLogger(__name__)
 
 def register_commands(
     bot,
@@ -408,7 +410,7 @@ def register_commands(
             )
 
         except Exception as e:
-            print(f"FORECAST ERROR: {e}")
+            logger.error(f"FORECAST ERROR: {e}")
 
             await interaction.response.send_message(
                 "Unable to retrieve the forecast right now.",
@@ -961,7 +963,7 @@ def register_commands(
             )
 
         except Exception as e:
-            print(f"POWER ERROR: {e}")
+            logger.error(f"POWER ERROR: {e}")
 
             await interaction.edit_original_response(
                 content="CFB Sports Network suffered an internal ranking committee scandal."
@@ -1153,7 +1155,7 @@ def register_commands(
                 await interaction.followup.send(chunk)
 
         except Exception as e:
-            print(f"PREVIEW ERROR: {e}")
+            logger.error(f"PREVIEW ERROR: {e}")
 
             await interaction.followup.send(
                 "CFB Sports Network's pregame desk has suffered "
@@ -1541,7 +1543,7 @@ def register_commands(
                 await interaction.followup.send(chunk)
 
         except Exception as e:
-            print(f"WRAPUP ERROR: {e}")
+            logger.error(f"WRAPUP ERROR: {e}")
 
             await interaction.followup.send(
                 "CFB Sports Network has suffered "
