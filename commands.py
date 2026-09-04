@@ -7,6 +7,7 @@ from wrapup import generate_wrapup
 from preview import generate_preview
 from weather import get_forecast, weather_emoji, format_time
 from power import generate_power
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,50 @@ def register_commands(
     mysql_database
 ):
 
+    async def active_match_autocomplete(
+        interaction: discord.Interaction,
+        current: str
+    ) -> list[app_commands.Choice[str]]:
+
+        connection = mysql.connector.connect(
+            host=mysql_host,
+            port=mysql_port,
+            user=mysql_user,
+            password=mysql_password,
+            database=mysql_database
+        )
+
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT match_date, location
+            FROM matches
+            WHERE active = TRUE
+            ORDER BY match_date
+            """
+        )
+
+        matches = cursor.fetchall()
+
+        cursor.close()
+        connection.close()
+
+        choices = []
+
+        for match_date, location in matches:
+            date_text = str(match_date)
+
+            if current.lower() in date_text.lower() or current.lower() in location.lower():
+                choices.append(
+                    app_commands.Choice(
+                        name=f"{date_text} — {location}",
+                        value=date_text
+                    )
+                )
+
+        return choices[:25]
+    
     async def player_autocomplete(
         interaction: discord.Interaction,
         current: str
@@ -389,6 +434,332 @@ def register_commands(
             f"for {match_date:%A, %B %d}."
         )
 
+    @bot.tree.command(
+        name="addmatch",
+        description="Add a new CFB match",
+        guild=dev_guild
+    )
+    @admin_only
+    @app_commands.describe(
+        match_date="Match date in YYYY-MM-DD format",
+        location="Match location",
+        tee_time_1="First tee time in HH:MM format",
+        tee_time_2="Second tee time in HH:MM format",
+        tee_time_3="Third tee time in HH:MM format",
+        tee_time_4="Fourth tee time in HH:MM format"
+    )
+    async def addmatch(
+        interaction: discord.Interaction,
+        match_date: str,
+        location: str,
+        tee_time_1: str,
+        tee_time_2: str | None = None,
+        tee_time_3: str | None = None,
+        tee_time_4: str | None = None
+    ):
+        log_bot_usage(
+            "addmatch",
+            interaction.user.id
+        )
+
+        if not bot_admin_only(interaction.user.id):
+            await interaction.response.send_message(
+                "You are not authorized to use this command.",
+                ephemeral=True
+            )
+            return
+
+        try:
+            datetime.strptime(match_date, "%Y-%m-%d")
+        except ValueError:
+            await interaction.response.send_message(
+                "Invalid date. Use YYYY-MM-DD.",
+                ephemeral=True
+            )
+            return
+
+        for tee_time in (tee_time_1, tee_time_2, tee_time_3, tee_time_4):
+            if tee_time is not None:
+                try:
+                    datetime.strptime(tee_time, "%H:%M")
+                except ValueError:
+                    await interaction.response.send_message(
+                        "Invalid tee time. Use HH:MM.",
+                        ephemeral=True
+                    )
+                    return
+
+        connection = mysql.connector.connect(
+            host=mysql_host,
+            port=mysql_port,
+            user=mysql_user,
+            password=mysql_password,
+            database=mysql_database
+        )
+
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT id
+            FROM matches
+            WHERE match_date = %s
+              AND active = TRUE
+            LIMIT 1
+            """,
+            (match_date,)
+        )
+        
+        existing_match = cursor.fetchone()
+
+        if existing_match:
+            cursor.close()
+            connection.close()
+
+            await interaction.response.send_message(
+                f"A match already exists on **{match_date}**.",
+                ephemeral=True
+            )
+            return
+        
+        cursor.execute(
+            """
+            INSERT INTO matches
+                (
+                    match_date,
+                    location,
+                    tee_time_1,
+                    tee_time_2,
+                    tee_time_3,
+                    tee_time_4,
+                    active
+                )
+            VALUES
+                (%s, %s, %s, %s, %s, %s, TRUE)
+            """,
+            (
+                match_date,
+                location,
+                tee_time_1,
+                tee_time_2,
+                tee_time_3,
+                tee_time_4
+            )
+        )
+
+        connection.commit()
+
+        cursor.close()
+        connection.close()
+
+        await interaction.response.send_message(
+            f"Match added for **{match_date}** at **{location}**.",
+            ephemeral=True
+        )
+
+    @bot.tree.command(
+        name="deletematch",
+        description="Delete an existing CFB match",
+        guild=dev_guild
+    )
+    @admin_only
+    @app_commands.autocomplete(
+        match_date=active_match_autocomplete
+    )
+    async def deletematch(
+        interaction: discord.Interaction,
+        match_date: str
+    ):
+        log_bot_usage(
+            "deletematch",
+            interaction.user.id
+        )
+
+        if not bot_admin_only(interaction.user.id):
+            await interaction.response.send_message(
+                "You are not authorized to use this command.",
+                ephemeral=True
+            )
+            return
+
+        connection = mysql.connector.connect(
+            host=mysql_host,
+            port=mysql_port,
+            user=mysql_user,
+            password=mysql_password,
+            database=mysql_database
+        )
+
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT location
+            FROM matches
+            WHERE match_date = %s
+              AND active = TRUE
+            LIMIT 1
+            """,
+            (match_date,)
+        )
+
+        match = cursor.fetchone()
+
+        if not match:
+            cursor.close()
+            connection.close()
+
+            await interaction.response.send_message(
+                f"No active match found for **{match_date}**.",
+                ephemeral=True
+            )
+            return
+
+        location = match[0]
+
+        cursor.execute(
+            """
+            UPDATE matches
+            SET active = FALSE
+            WHERE match_date = %s
+              AND active = TRUE
+            """,
+            (match_date,)
+        )
+
+        connection.commit()
+
+        cursor.close()
+        connection.close()
+
+        await interaction.response.send_message(
+            f"Deleted match for **{match_date}** at **{location}**.",
+            ephemeral=True
+        )
+
+    @bot.tree.command(
+        name="editmatch",
+        description="Edit an existing CFB match",
+        guild=dev_guild
+    )
+    @admin_only
+    @app_commands.autocomplete(
+        match_date=active_match_autocomplete
+    )
+    @app_commands.choices(
+        field=[
+            app_commands.Choice(name="Location", value="location"),
+            app_commands.Choice(name="Tee Time 1", value="tee_time_1"),
+            app_commands.Choice(name="Tee Time 2", value="tee_time_2"),
+            app_commands.Choice(name="Tee Time 3", value="tee_time_3"),
+            app_commands.Choice(name="Tee Time 4", value="tee_time_4")
+        ]
+    )
+    async def editmatch(
+        interaction: discord.Interaction,
+        match_date: str,
+        field: app_commands.Choice[str],
+        value: str
+    ):
+        log_bot_usage(
+            "editmatch",
+            interaction.user.id
+        )
+
+        if not bot_admin_only(interaction.user.id):
+            await interaction.response.send_message(
+                "You are not authorized to use this command.",
+                ephemeral=True
+            )
+            return
+
+        allowed_fields = {
+            "location",
+            "tee_time_1",
+            "tee_time_2",
+            "tee_time_3",
+            "tee_time_4"
+        }
+
+        if field.value not in allowed_fields:
+            await interaction.response.send_message(
+                "Invalid field.",
+                ephemeral=True
+            )
+            return
+
+        new_value = value
+
+        if value.lower() == "clear":
+            if field.value in ("location", "tee_time_1"):
+                await interaction.response.send_message(
+                    f"**{field.name}** cannot be cleared.",
+                    ephemeral=True
+                )
+                return
+
+            new_value = None
+
+        elif field.value.startswith("tee_time_"):
+            try:
+                datetime.strptime(value, "%H:%M")
+            except ValueError:
+                await interaction.response.send_message(
+                    "Invalid tee time. Use HH:MM, or `clear` to remove an optional tee time.",
+                    ephemeral=True
+                )
+                return
+
+        connection = mysql.connector.connect(
+            host=mysql_host,
+            port=mysql_port,
+            user=mysql_user,
+            password=mysql_password,
+            database=mysql_database
+        )
+
+        cursor = connection.cursor()
+
+        cursor.execute(
+            f"""
+            UPDATE matches
+            SET {field.value} = %s
+            WHERE match_date = %s
+              AND active = TRUE
+            """,
+            (
+                new_value,
+                match_date
+            )
+        )
+
+        if cursor.rowcount == 0:
+            connection.rollback()
+            cursor.close()
+            connection.close()
+
+            await interaction.response.send_message(
+                f"No active match found for **{match_date}**.",
+                ephemeral=True
+            )
+            return
+
+        connection.commit()
+
+        cursor.close()
+        connection.close()
+
+        if new_value is None:
+            await interaction.response.send_message(
+                f"Cleared **{field.name}** for **{match_date}**.",
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                f"Updated **{field.name}** for **{match_date}** to **{value}**.",
+                ephemeral=True
+            )
+                                            
     @bot.tree.command(
         name="helpbot",
         description="Show available CFB Bot commands",
