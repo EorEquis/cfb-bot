@@ -278,7 +278,7 @@ def get_latest_match_with_history():
     return match_data
 
 def get_preview_data(
-    player_names,
+    player_availability,
     match_date,
     location,
     tee_times
@@ -289,7 +289,7 @@ def get_preview_data(
 
     players = []
 
-    for name in player_names:
+    for name, status in player_availability:
         history = df[
             df["Player"] == name
         ].sort_values("MatchID")
@@ -308,6 +308,7 @@ def get_preview_data(
 
         players.append({
             "Player": name,
+            "Availability": status.upper(),
             "Matches Played": len(appearances),
             "History": appearances
         })
@@ -347,7 +348,18 @@ def get_preview_data(
         "Number of Tee Times": len(formatted_tee_times),
         "Maximum Groups": len(formatted_tee_times),
         "Maximum Players": len(formatted_tee_times) * 4,
-        "Field Status": "Current players marked IN; field may change before match day",
+        "Players IN": sum(
+            status == "in"
+            for _, status in player_availability
+        ),
+        "Players MAYBE": sum(
+            status == "maybe"
+            for _, status in player_availability
+        ),
+        "Field Status": (
+            "Players marked IN are the current field. "
+            "Players marked MAYBE are possible additions and are not currently in the field."
+        ),
         "Players": players,
         "Current CFB Holder": current_holder
     }

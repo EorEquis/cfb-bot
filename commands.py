@@ -1395,21 +1395,30 @@ def register_commands(
 
         cursor.execute(
             """
-            SELECT p.player_name
+            SELECT
+                p.player_name,
+                a.status
             FROM availability a
             JOIN players p
                 ON p.id = a.player_id
             WHERE a.match_id = %s
-            AND a.status = 'in'
+            AND a.status IN ('in', 'maybe')
             AND p.active = TRUE
-            ORDER BY p.player_name
+            ORDER BY
+                CASE a.status
+                    WHEN 'in' THEN 1
+                    WHEN 'maybe' THEN 2
+                END,
+                p.player_name
             """,
             (match_id,)
         )
 
+        player_availability = cursor.fetchall()
+
         player_names = [
             row[0]
-            for row in cursor.fetchall()
+            for row in player_availability
         ]
 
         cursor.execute(
@@ -1450,7 +1459,7 @@ def register_commands(
 
         try:
             preview_data = get_preview_data(
-                player_names,
+                player_availability,
                 match_date,
                 location,
                 tee_times
