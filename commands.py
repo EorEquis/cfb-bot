@@ -346,28 +346,28 @@ def register_commands(
 
             current = cursor.fetchone()
 
-        if current is None or current[0] != "in":
-            cursor.execute(
-                """
-                SELECT COUNT(*)
-                FROM availability
-                WHERE match_id = %s
-                AND status = 'in'
-                """,
-                (match_id,)
-            )
-
-            in_count = cursor.fetchone()[0]
-
-            if in_count >= capacity:
-                cursor.close()
-                connection.close()
-
-                await interaction.response.send_message(
-                    f"That match is currently full — {in_count} of {capacity} spots are claimed.",
-                    ephemeral=True
+            if current is None or current[0] != "in":
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM availability
+                    WHERE match_id = %s
+                    AND status = 'in'
+                    """,
+                    (match_id,)
                 )
-                return
+
+                in_count = cursor.fetchone()[0]
+
+                if in_count >= capacity:
+                    cursor.close()
+                    connection.close()
+
+                    await interaction.response.send_message(
+                        f"That match is currently full — {in_count} of {capacity} spots are claimed.",
+                        ephemeral=True
+                    )
+                    return
                 
         cursor.execute(
             """
