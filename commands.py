@@ -226,39 +226,16 @@ def register_commands(
         func.admin_only = True
         return func
 
-
-    def bot_admin_only(discord_user_id):
+    def bot_admin_only(interaction: discord.Interaction):
         # Permanent/bootstrap admin from .env
-        if discord_user_id == admin_discord_id:
+        if interaction.user.id == admin_discord_id:
             return True
 
-        conn = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
-        )
+        # Discord Admins role
+        if any(role.name == "Admins" for role in interaction.user.roles):
+            return True
 
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT bot_admin
-            FROM players
-            WHERE discord_user_id = %s
-              AND active = TRUE
-            """,
-            (discord_user_id,)
-        )
-
-        row = cursor.fetchone()
-
-        cursor.close()
-        conn.close()
-
-        return bool(row and row[0])
-
+        return False
 
     def dev_channel_only(interaction: discord.Interaction) -> bool:
         return True
@@ -462,7 +439,7 @@ def register_commands(
             interaction.user.id
         )
 
-        if not bot_admin_only(interaction.user.id):
+        if not bot_admin_only(interaction):
             await interaction.response.send_message(
                 "You are not authorized to use this command.",
                 ephemeral=True
@@ -575,7 +552,7 @@ def register_commands(
             interaction.user.id
         )
 
-        if not bot_admin_only(interaction.user.id):
+        if not bot_admin_only(interaction):
             await interaction.response.send_message(
                 "You are not authorized to use this command.",
                 ephemeral=True
@@ -666,7 +643,7 @@ def register_commands(
             interaction.user.id
         )
 
-        if not bot_admin_only(interaction.user.id):
+        if not bot_admin_only(interaction):
             await interaction.response.send_message(
                 "You are not authorized to use this command.",
                 ephemeral=True
@@ -779,7 +756,7 @@ def register_commands(
             return
 
         commands = bot.tree.get_commands(guild=dev_guild)
-        is_admin = bot_admin_only(interaction.user.id)
+        is_admin = bot_admin_only(interaction)
 
         visible_commands = []
 
@@ -1259,7 +1236,7 @@ def register_commands(
             )
             return
 
-        if not bot_admin_only(interaction.user.id):
+        if not bot_admin_only(interaction):
             await interaction.response.send_message(
                 "You are not authorized to use this command.",
                 ephemeral=True
@@ -1348,7 +1325,7 @@ def register_commands(
             )
             return
 
-        if not bot_admin_only(interaction.user.id):
+        if not bot_admin_only(interaction):
             await interaction.response.send_message(
                 "You are not authorized to use this command.",
                 ephemeral=True
@@ -1609,7 +1586,7 @@ def register_commands(
             )
             return
 
-        if not bot_admin_only(interaction.user.id):
+        if not bot_admin_only(interaction):
             await interaction.response.send_message(
                 "You are not authorized to use this command.",
                 ephemeral=True
@@ -1843,7 +1820,7 @@ def register_commands(
             )
             return
 
-        if not bot_admin_only(interaction.user.id):
+        if not bot_admin_only(interaction):
             await interaction.response.send_message(
                 "You are not authorized to use this command.",
                 ephemeral=True
