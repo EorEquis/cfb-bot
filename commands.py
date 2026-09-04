@@ -294,10 +294,16 @@ def register_commands(
 
         cursor.execute(
             """
-            SELECT id, match_date
+            SELECT
+                id,
+                match_date,
+                tee_time_1,
+                tee_time_2,
+                tee_time_3,
+                tee_time_4
             FROM matches
             WHERE active = TRUE
-              AND match_date >= CURDATE()
+            AND match_date >= CURDATE()
             ORDER BY match_date
             LIMIT 1
             """
@@ -315,8 +321,54 @@ def register_commands(
             )
             return
 
-        match_id, match_date = match
+        match_id, match_date, tee_time_1, tee_time_2, tee_time_3, tee_time_4 = match
 
+        capacity = sum(
+            tee_time is not None
+            for tee_time in (
+                tee_time_1,
+                tee_time_2,
+                tee_time_3,
+                tee_time_4
+            )
+        ) * 4        
+
+        if status == "in":
+            cursor.execute(
+                """
+                SELECT status
+                FROM availability
+                WHERE match_id = %s
+                AND player_id = %s
+                """,
+                (match_id, player_id)
+            )
+
+            current = cursor.fetchone()
+
+        if current is None or current[0] != "in":
+            cursor.execute(
+                """
+                SELECT COUNT(*)
+                FROM availability
+                WHERE match_id = %s
+                AND status = 'in'
+                """,
+                (match_id,)
+            )
+
+            in_count = cursor.fetchone()[0]
+
+            if in_count >= capacity:
+                cursor.close()
+                connection.close()
+
+                await interaction.response.send_message(
+                    f"That match is currently full — {in_count} of {capacity} spots are claimed.",
+                    ephemeral=True
+                )
+                return
+                
         cursor.execute(
             """
             INSERT INTO availability
@@ -1383,10 +1435,16 @@ def register_commands(
         # Find next active match
         cursor.execute(
             """
-            SELECT id, match_date
+            SELECT
+                id,
+                match_date,
+                tee_time_1,
+                tee_time_2,
+                tee_time_3,
+                tee_time_4
             FROM matches
             WHERE active = TRUE
-              AND match_date >= CURDATE()
+            AND match_date >= CURDATE()
             ORDER BY match_date
             LIMIT 1
             """
@@ -1403,7 +1461,17 @@ def register_commands(
             )
             return
 
-        match_id, match_date = match
+        match_id, match_date, tee_time_1, tee_time_2, tee_time_3, tee_time_4 = match
+
+        capacity = sum(
+            tee_time is not None
+            for tee_time in (
+                tee_time_1,
+                tee_time_2,
+                tee_time_3,
+                tee_time_4
+            )
+        ) * 4
 
         cursor.execute(
             """
@@ -1422,6 +1490,13 @@ def register_commands(
 
         rows = cursor.fetchall()
 
+        in_count = sum(
+            status == "in"
+            for _, status in rows
+        )
+
+        spots_available = capacity - in_count
+
         cursor.close()
         connection.close()
 
@@ -1439,7 +1514,8 @@ def register_commands(
             return ", ".join(names) if names else "Nobody"
 
         message = (
-            f"🏌️ **CFB Availability — {match_date:%A, %B %d}**\n\n"
+            f"🏌️ **CFB Availability — {match_date:%A, %B %d}**\n"
+            f"⛳ **{in_count} IN — {spots_available} spots available**\n\n"
             f"✅ **IN:** {format_names(groups['in'])}\n"
             f"❌ **OUT:** {format_names(groups['out'])}\n"
             f"🤷 **MAYBE:** {format_names(groups['maybe'])}\n"
