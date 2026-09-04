@@ -18,7 +18,7 @@ LOG_LEVEL = getattr(logging, LOG_LEVEL_NAME, None)
 if not isinstance(LOG_LEVEL, int):
     raise ValueError(f"Invalid logging level: {LOG_LEVEL_NAME}")
 
-BOT_VERSION = "1.1.0"
+BOT_VERSION = "1.2.0_dev"
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 DEV_CHANNEL_ID = int(os.getenv("DEV_CHANNEL_ID"))
