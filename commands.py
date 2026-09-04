@@ -390,129 +390,6 @@ def register_commands(
         )
 
     @bot.tree.command(
-        name="forecast",
-        description="Show the weather forecast for the next CFB match",
-        guild=dev_guild
-    )
-    async def forecast(interaction: discord.Interaction):
-        log_bot_usage(
-            "forecast",
-            interaction.user.id
-        )
-
-        if not dev_channel_only(interaction):
-            await interaction.response.send_message(
-                "CFB Bot is currently restricted to #cfb-bot-dev.",
-                ephemeral=True
-            )
-            return
-
-        conn = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
-        )
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT
-                match_date,
-                location,
-                tee_time_1
-            FROM matches
-            WHERE active = TRUE
-            AND match_date >= CURDATE()
-            ORDER BY match_date
-            LIMIT 1
-            """
-        )
-
-        match = cursor.fetchone()
-
-        cursor.close()
-        conn.close()
-
-        if match is None:
-            await interaction.response.send_message(
-                "There are no upcoming CFB matches scheduled.",
-                ephemeral=True
-            )
-            return
-
-        match_date, location, first_tee_time = match
-
-        if first_tee_time is None:
-            await interaction.response.send_message(
-                "The next match does not have a tee time yet.",
-                ephemeral=True
-            )
-            return
-
-        try:
-            forecast_data = get_forecast(
-                match_date,
-                first_tee_time
-            )
-
-        except Exception as e:
-            logger.error(f"FORECAST ERROR: {e}")
-
-            await interaction.response.send_message(
-                "Unable to retrieve the forecast right now.",
-                ephemeral=True
-            )
-            return
-
-        start = forecast_data["start"]
-        end = forecast_data["end"]
-
-        start_emoji = weather_emoji(
-            start["weather_code"]
-        )
-
-        end_emoji = weather_emoji(
-            end["weather_code"]
-        )
-
-        message = (
-            f"🌤️ **CFB MATCH FORECAST**\n\n"
-            f"📅 **{match_date.strftime('%A, %B %d, %Y')}**\n"
-            f"📍 **{location}**\n\n"
-
-            f"**{start_emoji} START — "
-            f"{format_time(start['time'])}**\n"
-            f"🌡️ Temp: **{start['temperature']}°F**\n"
-            f"🥵 Feels Like: **{start['heat_index']}°F**\n"
-            f"💧 Humidity: **{start['humidity']}%**\n"
-            f"🌧️ Rain: **{start['rain_chance']}%**\n"
-            f"☁️ Cloud Cover: **{start['cloud_cover']}%**\n"
-            f"💨 Wind: **{start['wind_direction']} "
-            f"{start['wind_speed']} mph** "
-            f"(gusts {start['wind_gusts']} mph)\n\n"
-
-            f"**{end_emoji} END — "
-            f"{format_time(end['time'])}**\n"
-            f"🌡️ Temp: **{end['temperature']}°F**\n"
-            f"🥵 Feels Like: **{end['heat_index']}°F**\n"
-            f"💧 Humidity: **{end['humidity']}%**\n"
-            f"🌧️ Rain: **{end['rain_chance']}%**\n"
-            f"☁️ Cloud Cover: **{end['cloud_cover']}%**\n"
-            f"💨 Wind: **{end['wind_direction']} "
-            f"{end['wind_speed']} mph** "
-            f"(gusts {end['wind_gusts']} mph)\n\n"
-
-            f"_Forecast: Open-Meteo_"
-        )
-
-        await interaction.response.send_message(
-            message
-        )
-
-    @bot.tree.command(
         name="helpbot",
         description="Show available CFB Bot commands",
         guild=dev_guild
@@ -794,6 +671,57 @@ def register_commands(
             + "\n\n────────────\n\n".join(blocks)
         )
 
+        if not show_all:
+            match_date, location, tee_time_1, _, _, _, _ = matches[0]
+
+            if tee_time_1 is not None:
+                try:
+                    forecast_data = get_forecast(
+                        match_date,
+                        tee_time_1
+                    )
+                except Exception as e:
+                    logger.error(f"FORECAST ERROR: {e}")
+                    forecast_data = None
+
+            else:
+                forecast_data = None
+    
+            if forecast_data is not None:
+                start = forecast_data["start"]
+                end = forecast_data["end"]
+
+                start_emoji = weather_emoji(start["weather_code"])
+                end_emoji = weather_emoji(end["weather_code"])                    
+
+                message += (
+                    f"\n\n🌤️ **MATCH FORECAST**\n\n"
+
+                    f"**{start_emoji} START — {format_time(start['time'])}**\n"
+                    f"🌡️ Temp: **{start['temperature']}°F**\n"
+                    f"💧 Humidity: **{start['humidity']}%**\n"
+                    f"🥵 Feels Like: **{start['heat_index']}°F**\n"
+                    f"🌧️ Rain: **{start['rain_chance']}%**\n"
+                    f"☁️ Cloud Cover: **{start['cloud_cover']}%**\n"
+                    f"💨 Wind: **{start['wind_direction']} {start['wind_speed']} mph** "
+                    f"(gusts {start['wind_gusts']} mph)\n\n"
+
+                    f"**{end_emoji} END — {format_time(end['time'])}**\n"
+                    f"🌡️ Temp: **{end['temperature']}°F**\n"
+                    f"💧 Humidity: **{end['humidity']}%**\n"
+                    f"🥵 Feels Like: **{end['heat_index']}°F**\n"
+                    f"🌧️ Rain: **{end['rain_chance']}%**\n"
+                    f"☁️ Cloud Cover: **{end['cloud_cover']}%**\n"
+                    f"💨 Wind: **{end['wind_direction']} {end['wind_speed']} mph** "
+                    f"(gusts {end['wind_gusts']} mph)"
+                )
+
+            else:
+                message += (
+                    "\n\n🌤️ **MATCH FORECAST**\n\n"
+                    "Unable to retrieve the forecast right now."
+                )
+                            
         await interaction.response.send_message(message)
 
 
