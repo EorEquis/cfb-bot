@@ -362,5 +362,3 @@ Git tags are apparently also forever.
 But above all:
 
 # **The Fuck Ball does not care.**
-
-### *The Fuck Ball cares only about the Fuck Ball.*
