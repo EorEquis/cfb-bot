@@ -317,6 +317,7 @@ This arrangement has proven remarkably effective.
 - NSSM has free will.
 - Discord's UI occasionally hides useful things for sport.
 - The Fuck Ball's motivations remain unknowable.
+- The spreadsheet occasionally knows the future and shares it with functions that weren’t emotionally prepared.
 
 ---
 
