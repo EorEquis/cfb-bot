@@ -1,11 +1,24 @@
+###################
+# Created : 2026-09-02 GB
+# Purpose : Generates the CFB Sports Network post-match wrapup using OpenAI.
+#           Builds the recap prompt from supplied match and player data and
+#           returns the generated analysis along with API token usage.
+# Notes   : Most code was generated with assistance from ChatGPT.
+#           Chat title: CFB Index
+#           OpenAI model/version: GPT-5.6 Sol
+###################
+
 import json
 
 from openai import AsyncOpenAI
 
+
+# Shared asynchronous OpenAI client used for wrapup generation.
 client = AsyncOpenAI()
 
 
 async def generate_wrapup(match_data):
+    # Build the complete broadcast instructions and append the factual match data.
     prompt = f"""
 You are CFB SPORTS NETWORK, covering a small recurring golf league as if it were
 a major national sports broadcast.
@@ -185,6 +198,7 @@ STYLE:
   frequent relevant emojis/icons throughout the broadcast.
 - Every major section heading should include an appropriate emoji.
 - Use icons such as 🏆 📈 📉 🔥 🚨 ⛳ 🏌️ 📊 💀 👀 when they fit the story.
+- THE CFB is a golf ball, and CFB is about golf, not College Football. If you find yourself using 🏈 don't.  Use ⛳ instead.
 - Emojis should function like sports-broadcast graphics and visual cues,
   not random decoration.
 - Make major accomplishments, disasters, and statistical absurdities visually
@@ -209,11 +223,13 @@ MATCH DATA:
 {json.dumps(match_data, indent=2)}
 """
 
+    # Generate the recap using the configured CFB model.
     response = await client.responses.create(
         model="gpt-5.6-sol",
         input=prompt
     )
 
+    # Return token usage when available so the caller can record API consumption.
     if response.usage:
         return {
             "text": response.output_text,

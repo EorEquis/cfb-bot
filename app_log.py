@@ -1,13 +1,23 @@
-import mysql.connector
+###################
+# Created : 2026-09-03 GB
+# Purpose : Provides database-backed logging for the CFB Bot.
+#           Writes application log messages to the MariaDB bot_log table
+#           and provides a logging.Handler for use with Python logging.
+# Notes   : Most code was generated with assistance from ChatGPT.
+#           Chat title: CFB Index
+#           OpenAI model/version: GPT-5.6 Sol
+###################
+
 import logging
+import mysql.connector
 
 
 def write_log(
     mysql_host,
     mysql_port,
+    mysql_database,
     mysql_user,
     mysql_password,
-    mysql_database,
     severity,
     message,
     source=None
@@ -16,9 +26,9 @@ def write_log(
     conn = mysql.connector.connect(
         host=mysql_host,
         port=mysql_port,
+        database=mysql_database,
         user=mysql_user,
-        password=mysql_password,
-        database=mysql_database
+        password=mysql_password
     )
 
     cursor = conn.cursor()
@@ -40,31 +50,32 @@ def write_log(
     cursor.close()
     conn.close()
 
+
 class DatabaseLogHandler(logging.Handler):
     def __init__(
         self,
         mysql_host,
         mysql_port,
+        mysql_database,
         mysql_user,
-        mysql_password,
-        mysql_database
+        mysql_password
     ):
         super().__init__()
 
         self.mysql_host = mysql_host
         self.mysql_port = mysql_port
+        self.mysql_database = mysql_database
         self.mysql_user = mysql_user
         self.mysql_password = mysql_password
-        self.mysql_database = mysql_database
-
+        
     def emit(self, record):
         try:
             write_log(
                 self.mysql_host,
                 self.mysql_port,
+                self.mysql_database,
                 self.mysql_user,
                 self.mysql_password,
-                self.mysql_database,
                 record.levelname,
                 record.getMessage(),
                 record.name

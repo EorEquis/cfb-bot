@@ -1,9 +1,23 @@
+###################
+# Created : 2026-09-02 GB
+# Purpose : Generates the CFB Sports Network pre-match preview using OpenAI.
+#           Builds the preview prompt from supplied match and player data and
+#           returns the generated analysis along with API token usage.
+# Notes   : Most code was generated with assistance from ChatGPT.
+#           Chat title: CFB Index
+#           OpenAI model/version: GPT-5.6 Sol
+###################
+
 from openai import AsyncOpenAI
 
+
+# Create the shared asynchronous OpenAI client used for preview requests.
 client = AsyncOpenAI()
 
 
 async def generate_preview(preview_data):
+    # Define the factual constraints, CFB rules, field interpretation, and
+    # broadcast style used by the model to generate the pre-match preview.
     prompt = f"""
 You are CFB SPORTS NETWORK, an absurdly overproduced sports network covering
 a recreational golf league called CFB.
@@ -26,8 +40,6 @@ IMPORTANT FACTUAL RULES:
 - Match Performance is an analytical CFB Index measurement of how a player
   performed relative to expectation. It does NOT determine match winners.
 - Players compete for match-play points within their individual groups.
-- Group winners advance to a separate putting playoff.
-- The putting playoff determines the overall Match Winner.
 - The overall Match Winner takes possession of the Fuck Ball / CFB.
 - The "Current CFB Holder" in the supplied data is the defending holder.
 
@@ -88,16 +100,12 @@ IMPORTANT GROUP STRUCTURE:
 - Create as many groups as necessary to accommodate the players marked IN,
   up to the number of available tee times for the match.
 - Each tee time supports one group.
-- Therefore, the maximum number of groups equals the number of tee times,
-  and the maximum field size is 4 players per available tee time.
-- For example, 3 tee times allow at most 3 groups and 12 players.
-- If 4 or fewer players are IN, there is only one group.
-- When there is only one group, the Group Winner is also the overall Match Winner.
-- In a one-group match, there is no separate putting playoff between group winners.
-- The Group Winner therefore takes possession of the Fuck Ball / CFB directly.
-- Only matches with 2 or more groups require the separate putting playoff to
-  determine the overall Match Winner.
-
+- If there is one group, its Group Winner is also the Match Winner.
+- If there are multiple groups, the Group Winners compete in a putting playoff
+  to determine the Match Winner.
+- LIGHTEN THE FUCK UP about the playoff.  It's fine to mention it ONCE in the
+  opening, but it's a boring fact of the framework, not a topic for repeated discussion.
+  
 PLAYER NOTES:
 
 - Player notes are background knowledge about the golfers and may contain
@@ -157,6 +165,10 @@ SAMPLE SIZE:
 - Never invent a trend or streak that the supplied data does not support.
 - Judge sample size individually as well as across the league.
 
+EMOJIS:
+- THE CFB is a golf ball, and CFB is about golf, not College Football.
+- If you find yourself using 🏈 don't.  Use ⛳ instead.
+
 PREVIEW-SPECIFIC STYLE:
 
 - This is a PREVIEW, not a recap.
@@ -183,11 +195,13 @@ End EXACTLY with:
 *We crunch the numbers so you don't have to understand what the fuck they're doing.*
 """
 
+    # Submit the completed prompt and wait asynchronously for the model response.
     response = await client.responses.create(
         model="gpt-5.6-sol",
         input=prompt
     )
 
+    # Return both the generated preview and token counts used for bot logging.
     return {
         "text": response.output_text,
         "input_tokens": response.usage.input_tokens,

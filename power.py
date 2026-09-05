@@ -1,9 +1,23 @@
+###################
+# Created : 2026-09-03 GB
+# Purpose : Generates CFB Sports Network power rankings using OpenAI.
+#           Builds the ranking prompt from supplied CFB player data and
+#           returns the generated analysis along with API token usage.
+# Notes   : Most code was generated with assistance from ChatGPT.
+#           Chat title: CFB Index
+#           OpenAI model/version: GPT-5.6 Sol
+###################
+
 from openai import AsyncOpenAI
 
+
+# Create the shared asynchronous OpenAI client used for power ranking requests.
 client = AsyncOpenAI()
 
 
 async def generate_power(power_data):
+    # Define the ranking criteria, statistical constraints, and CFB Sports
+    # Network voice used by the model to evaluate the supplied player data.
     prompt = f"""
 You are CFB SPORTS NETWORK.
 
@@ -49,6 +63,10 @@ STYLE:
 - Discord-friendly formatting.
 - No Markdown tables.
 
+EMOJIS:
+- THE CFB is a golf ball, and CFB is about golf, not College Football.
+- If you find yourself using 🏈 don't.  Use ⛳ instead.
+
 End EXACTLY with:
 
 **THIS HAS BEEN CFB SPORTS NETWORK.**
@@ -60,11 +78,13 @@ DATA:
 {power_data}
 """
 
+    # Submit the completed prompt and wait asynchronously for the model response.
     response = await client.responses.create(
         model="gpt-5.6-sol",
         input=prompt
     )
 
+    # Return both the generated ranking and token counts used for bot logging.
     return {
         "text": response.output_text,
         "input_tokens": response.usage.input_tokens,

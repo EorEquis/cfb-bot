@@ -1,13 +1,46 @@
-import mysql.connector
+###################
+# Created : 2026-08-30 GB
+# Purpose : Registers Discord slash commands for the CFB Bot.
+#           Handles match administration, player availability and profiles,
+#           league information, and CFB Sports Network AI commands.
+# Notes   : Most code was generated with assistance from ChatGPT.
+#           Chat title: CFB Index
+#           OpenAI model/version: GPT-5.6 Sol
+###################
+
 import discord
 import logging
-from discord import app_commands
-from sheets import get_latest_match_with_history, get_preview_data, get_player_profile, get_power_data
-from wrapup import generate_wrapup
-from preview import generate_preview
-from weather import get_forecast, weather_emoji, format_time
-from power import generate_power
+import mysql.connector
+
 from datetime import datetime
+from discord import app_commands
+from helpers import (
+    active_match_autocomplete,
+    admin_only,
+    bot_admin_only,
+    configure_helpers,
+    dev_channel_only,
+    log_bot_usage,
+    mark_bot_usage_api_call,
+    player_autocomplete,
+    set_availability,
+    split_discord_message,
+    update_bot_usage_tokens
+)
+from power import generate_power
+from preview import generate_preview
+from sheets import (
+    get_latest_match_with_history,
+    get_player_profile,
+    get_power_data,
+    get_preview_data
+)
+from weather import (
+    format_time,
+    get_forecast,
+    weather_emoji
+)
+from wrapup import generate_wrapup
 
 logger = logging.getLogger(__name__)
 
@@ -18,399 +51,23 @@ def register_commands(
     admin_discord_id,
     mysql_host,
     mysql_port,
+    mysql_database,
     mysql_user,
-    mysql_password,
-    mysql_database
+    mysql_password
 ):
 
-    async def active_match_autocomplete(
-        interaction: discord.Interaction,
-        current: str
-    ) -> list[app_commands.Choice[str]]:
-
-        connection = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
-        )
-
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            SELECT match_date, location
-            FROM matches
-            WHERE active = TRUE
-            ORDER BY match_date
-            """
-        )
-
-        matches = cursor.fetchall()
-
-        cursor.close()
-        connection.close()
-
-        choices = []
-
-        for match_date, location in matches:
-            date_text = str(match_date)
-
-            if current.lower() in date_text.lower() or current.lower() in location.lower():
-                choices.append(
-                    app_commands.Choice(
-                        name=f"{date_text} — {location}",
-                        value=date_text
-                    )
-                )
-
-        return choices[:25]
-    
-    async def player_autocomplete(
-        interaction: discord.Interaction,
-        current: str
-    ):
-        conn = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
-        )
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT
-                player_name,
-                discord_display_name
-            FROM players
-            WHERE active = TRUE
-            AND (
-                    player_name LIKE %s
-                OR discord_display_name LIKE %s
-            )
-            ORDER BY player_name
-            LIMIT 25
-            """,
-            (
-                f"%{current}%",
-                f"%{current}%"
-            )
-        )
-
-        rows = cursor.fetchall()
-
-        cursor.close()
-        conn.close()
-
-        choices = []
-
-        for player_name, display_name in rows:
-            if display_name:
-                label = f"{player_name} ({display_name})"
-            else:
-                label = player_name
-
-            choices.append(
-                app_commands.Choice(
-                    name=label,
-                    value=player_name
-                )
-            )
-
-        return choices
-
-    def log_bot_usage(
-        command_name,
-        discord_user_id
-    ):
-        conn = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
-        )
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            INSERT INTO bot_usage
-                (
-                    command_name,
-                    discord_user_id,
-                    api_call
-                )
-            VALUES (%s, %s, FALSE)
-            """,
-            (
-                command_name,
-                discord_user_id
-            )
-        )
-
-        usage_id = cursor.lastrowid
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        return usage_id
-
-
-    def mark_bot_usage_api_call(usage_id):
-        conn = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
-        )
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            UPDATE bot_usage
-            SET api_call = TRUE
-            WHERE id = %s
-            """,
-            (usage_id,)
-        )
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-
-    def update_bot_usage_tokens(
-        usage_id,
-        input_tokens,
-        output_tokens
-    ):
-        conn = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
-        )
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            UPDATE bot_usage
-            SET
-                input_tokens = %s,
-                output_tokens = %s
-            WHERE id = %s
-            """,
-            (
-                input_tokens,
-                output_tokens,
-                usage_id
-            )
-        )
-
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-
-    def admin_only(func):
-        func.admin_only = True
-        return func
-
-    def bot_admin_only(interaction: discord.Interaction):
-        # Permanent/bootstrap admin from .env
-        if interaction.user.id == admin_discord_id:
-            return True
-
-        # Discord Admins role
-        if any(role.name == "Admins" for role in interaction.user.roles):
-            return True
-
-        return False
-
-    def dev_channel_only(interaction: discord.Interaction) -> bool:
-        return True
-
-    def split_discord_message(text, limit=2000):
-        chunks = []
-
-        while len(text) > limit:
-            # Prefer splitting at a line break
-            split_at = text.rfind("\n", 0, limit)
-
-            # Otherwise split at a space
-            if split_at == -1:
-                split_at = text.rfind(" ", 0, limit)
-
-            # Absolute fallback
-            if split_at == -1:
-                split_at = limit
-
-            chunks.append(text[:split_at])
-            text = text[split_at:].lstrip()
-
-        if text:
-            chunks.append(text)
-
-        return chunks
-
-
-    async def set_availability(
-        interaction: discord.Interaction,
-        status: str
-    ):
-        log_bot_usage(
-            status,
-            interaction.user.id
-        )
-
-        if not dev_channel_only(interaction):
-            await interaction.response.send_message(
-                "CFB Bot is currently restricted to #cfb-bot-dev.",
-                ephemeral=True
-            )
-            return
-
-        connection = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
-        )
-
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            SELECT id, player_name
-            FROM players
-            WHERE discord_user_id = %s
-              AND active = TRUE
-            """,
-            (interaction.user.id,)
-        )
-
-        player = cursor.fetchone()
-
-        if player is None:
-            cursor.close()
-            connection.close()
-
-            await interaction.response.send_message(
-                "I couldn't find you in the CFB player list.",
-                ephemeral=True
-            )
-            return
-
-        player_id, player_name = player
-
-        cursor.execute(
-            """
-            SELECT
-                id,
-                match_date,
-                tee_time_1,
-                tee_time_2,
-                tee_time_3,
-                tee_time_4
-            FROM matches
-            WHERE active = TRUE
-            AND match_date >= CURDATE()
-            ORDER BY match_date
-            LIMIT 1
-            """
-        )
-
-        match = cursor.fetchone()
-
-        if match is None:
-            cursor.close()
-            connection.close()
-
-            await interaction.response.send_message(
-                "There are no upcoming CFB matches scheduled.",
-                ephemeral=True
-            )
-            return
-
-        match_id, match_date, tee_time_1, tee_time_2, tee_time_3, tee_time_4 = match
-
-        capacity = sum(
-            tee_time is not None
-            for tee_time in (
-                tee_time_1,
-                tee_time_2,
-                tee_time_3,
-                tee_time_4
-            )
-        ) * 4        
-
-        if status == "in":
-            cursor.execute(
-                """
-                SELECT status
-                FROM availability
-                WHERE match_id = %s
-                AND player_id = %s
-                """,
-                (match_id, player_id)
-            )
-
-            current = cursor.fetchone()
-
-            if current is None or current[0] != "in":
-                cursor.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM availability
-                    WHERE match_id = %s
-                    AND status = 'in'
-                    """,
-                    (match_id,)
-                )
-
-                in_count = cursor.fetchone()[0]
-
-                if in_count >= capacity:
-                    cursor.close()
-                    connection.close()
-
-                    await interaction.response.send_message(
-                        f"That match is currently full — {in_count} of {capacity} spots are claimed.",
-                        ephemeral=True
-                    )
-                    return
-                
-        cursor.execute(
-            """
-            INSERT INTO availability
-                (match_id, player_id, status)
-            VALUES (%s, %s, %s)
-            ON DUPLICATE KEY UPDATE
-                status = VALUES(status)
-            """,
-            (match_id, player_id, status)
-        )
-
-        connection.commit()
-        cursor.close()
-        connection.close()
-
-        await interaction.response.send_message(
-            f"**{player_name}** is **{status.upper()}** "
-            f"for {match_date:%A, %B %d}."
-        )
-
+    # Supply shared helper configuration once before registering commands.
+    configure_helpers(
+        mysql_host,
+        mysql_port,
+        mysql_database,
+        mysql_user,
+        mysql_password,
+        admin_discord_id
+    )
+
+
+    # Add a new active match after validating the date and any supplied tee times.
     @bot.tree.command(
         name="addmatch",
         description="Add a new CFB match",
@@ -534,6 +191,7 @@ def register_commands(
             ephemeral=True
         )
 
+    # Soft-delete an active match selected by date.
     @bot.tree.command(
         name="deletematch",
         description="Delete an existing CFB match",
@@ -614,6 +272,7 @@ def register_commands(
             ephemeral=True
         )
 
+    # Update one editable field on an active match; optional tee times may be cleared.
     @bot.tree.command(
         name="editmatch",
         description="Edit an existing CFB match",
@@ -737,6 +396,7 @@ def register_commands(
                 ephemeral=True
             )
                                             
+    # Build the command help display dynamically, hiding admin-only commands from non-admins.
     @bot.tree.command(
         name="helpbot",
         description="Show available CFB Bot commands",
@@ -820,6 +480,7 @@ def register_commands(
         )
 
 
+    # Record the current player as IN for the next match.
     @bot.tree.command(
         name="in",
         description="Mark yourself as playing in the next CFB match",
@@ -829,6 +490,7 @@ def register_commands(
         await set_availability(interaction, "in")
 
 
+    # Provide the shared CFB Index spreadsheet link.
     @bot.tree.command(
         name="index",
         description="View the CFB Index spreadsheet",
@@ -855,6 +517,7 @@ def register_commands(
         )
 
 
+    # Show the next match, or all upcoming matches, with weather for the next match when available.
     @bot.tree.command(
         name="match",
         description="Show information for upcoming CFB matches",
@@ -910,7 +573,7 @@ def register_commands(
                     notes
                 FROM matches
                 WHERE active = TRUE
-                  AND match_date >= CURDATE()
+                AND match_date >= CURDATE()
                 ORDER BY match_date
                 """
             )
@@ -930,7 +593,7 @@ def register_commands(
                     notes
                 FROM matches
                 WHERE active = TRUE
-                  AND match_date >= CURDATE()
+                AND match_date >= CURDATE()
                 ORDER BY match_date
                 LIMIT 1
                 """
@@ -948,6 +611,7 @@ def register_commands(
             )
             return
 
+        # Local display helper for converting database tee-time intervals to 12-hour clock text.
         def format_tee_time(t):
             total_seconds = int(t.total_seconds())
             hours = total_seconds // 3600
@@ -960,6 +624,15 @@ def register_commands(
                 display_hour = 12
 
             return f"{display_hour}:{minutes:02d} {suffix}"
+
+        # Select an icon appropriate to the apparent temperature.
+        def feels_like_emoji(apparent_temperature):
+            if apparent_temperature <= 40:
+                return "🥶"
+            elif apparent_temperature >= 85:
+                return "🥵"
+
+            return "🌡️"
 
         blocks = []
 
@@ -1034,13 +707,20 @@ def register_commands(
 
             else:
                 forecast_data = None
-    
+
             if forecast_data is not None:
                 start = forecast_data["start"]
                 end = forecast_data["end"]
 
                 start_emoji = weather_emoji(start["weather_code"])
-                end_emoji = weather_emoji(end["weather_code"])                    
+                end_emoji = weather_emoji(end["weather_code"])
+
+                start_feels_like_emoji = feels_like_emoji(
+                    start["apparent_temperature"]
+                )
+                end_feels_like_emoji = feels_like_emoji(
+                    end["apparent_temperature"]
+                )
 
                 message += (
                     f"\n\n🌤️ **MATCH FORECAST**\n\n"
@@ -1048,7 +728,7 @@ def register_commands(
                     f"**{start_emoji} START — {format_time(start['time'])}**\n"
                     f"🌡️ Temp: **{start['temperature']}°F**\n"
                     f"💧 Humidity: **{start['humidity']}%**\n"
-                    f"🥵 Feels Like: **{start['heat_index']}°F**\n"
+                    f"{start_feels_like_emoji} Feels Like: **{start['apparent_temperature']}°F**\n"
                     f"🌧️ Rain: **{start['rain_chance']}%**\n"
                     f"☁️ Cloud Cover: **{start['cloud_cover']}%**\n"
                     f"💨 Wind: **{start['wind_direction']} {start['wind_speed']} mph** "
@@ -1057,7 +737,7 @@ def register_commands(
                     f"**{end_emoji} END — {format_time(end['time'])}**\n"
                     f"🌡️ Temp: **{end['temperature']}°F**\n"
                     f"💧 Humidity: **{end['humidity']}%**\n"
-                    f"🥵 Feels Like: **{end['heat_index']}°F**\n"
+                    f"{end_feels_like_emoji} Feels Like: **{end['apparent_temperature']}°F**\n"
                     f"🌧️ Rain: **{end['rain_chance']}%**\n"
                     f"☁️ Cloud Cover: **{end['cloud_cover']}%**\n"
                     f"💨 Wind: **{end['wind_direction']} {end['wind_speed']} mph** "
@@ -1069,10 +749,10 @@ def register_commands(
                     "\n\n🌤️ **MATCH FORECAST**\n\n"
                     "Unable to retrieve the forecast right now."
                 )
-                            
+
         await interaction.response.send_message(message)
 
-
+    # Record the current player as MAYBE for the next match.
     @bot.tree.command(
         name="maybe",
         description="Mark yourself as maybe playing in the next CFB match",
@@ -1082,6 +762,7 @@ def register_commands(
         await set_availability(interaction, "maybe")
 
 
+    # Record the current player as OUT for the next match.
     @bot.tree.command(
         name="out",
         description="Mark yourself as not playing in the next CFB match",
@@ -1091,6 +772,7 @@ def register_commands(
         await set_availability(interaction, "out")
 
 
+    # Lightweight bot availability check.
     @bot.tree.command(
         name="ping",
         description="Make sure CFB Bot is alive",
@@ -1111,6 +793,7 @@ def register_commands(
 
         await interaction.response.send_message("https://klipy.com/gifs/cars-cruz-ramirez-2")
 
+    # Display a player profile using database identity data and calculated CFB statistics.
     @bot.tree.command(
         name="player",
         description="Show a CFB player profile",
@@ -1217,6 +900,7 @@ def register_commands(
             message
         )
 
+    # Generate AI-assisted CFB Sports Network power rankings and record API token usage.
     @bot.tree.command(
         name="power",
         description="Show the latest CFB Sports Network power rankings",
@@ -1306,6 +990,7 @@ def register_commands(
         for chunk in chunks[1:]:
             await interaction.followup.send(chunk)
 
+    # Generate an AI-assisted preview for the next match using IN and MAYBE players.
     @bot.tree.command(
         name="preview",
         description="Get the CFB Sports Network preview for the next match",
@@ -1421,6 +1106,16 @@ def register_commands(
             for row in player_availability
         ]
 
+        if not player_names:
+            cursor.close()
+            connection.close()
+
+            await interaction.response.send_message(
+                "Nobody is currently marked IN or MAYBE for the next CFB match.",
+                ephemeral=True
+            )
+            return
+
         cursor.execute(
             """
             SELECT
@@ -1444,13 +1139,6 @@ def register_commands(
 
         cursor.close()
         connection.close()
-
-        if not player_names:
-            await interaction.response.send_message(
-                "Nobody is currently marked IN for the next CFB match.",
-                ephemeral=True
-            )
-            return
 
         await interaction.response.send_message(
             "📡 **CFB Sports Network is examining the field "
@@ -1496,6 +1184,7 @@ def register_commands(
                 "a catastrophic production failure."
             )
 
+    # Save the invoking player's favorite quote after basic validation.
     @bot.tree.command(
         name="quote",
         description="Set your favorite quote",
@@ -1576,6 +1265,7 @@ def register_commands(
             f'💬 **Favorite quote updated:** *"{quote}"*'
         )
 
+    # Refresh stored Discord usernames and display names for active linked players.
     @bot.tree.command(
         name="refresh",
         description="Refresh Discord names for CFB players",
@@ -1663,6 +1353,7 @@ def register_commands(
         )
 
 
+    # Provide the official CFB rules document link.
     @bot.tree.command(
         name="rules",
         description="Get the official CFB rules",
@@ -1689,6 +1380,7 @@ def register_commands(
         )
 
 
+    # Summarize availability and remaining capacity for the next active match.
     @bot.tree.command(
         name="who",
         description="Show who's in, out, maybe, or unknown for the next CFB match",
@@ -1795,6 +1487,7 @@ def register_commands(
         for player_name, status in rows:
             groups[status].append(player_name)
 
+        # Local display helper for rendering empty player groups consistently.
         def format_names(names):
             return ", ".join(names) if names else "Nobody"
 
@@ -1810,6 +1503,7 @@ def register_commands(
         await interaction.response.send_message(message)
 
 
+    # Generate an AI-assisted recap of the latest match and record API token usage.
     @bot.tree.command(
         name="wrapup",
         description="Get the latest CFB Sports Network match recap",
