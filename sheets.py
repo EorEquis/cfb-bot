@@ -314,6 +314,15 @@ def get_preview_data(
 ):
     df = get_matches()
 
+
+    # Exclude the upcoming match and any future matches from player history.
+    historical_df = df[
+        pd.to_datetime(
+            df["Match Date"],
+            errors="coerce"
+        ).dt.date < match_date
+    ].copy()
+    
     # Give the preview model explicit timing context for how imminent the match is.
     days_until_match = (match_date - date.today()).days
 
@@ -321,8 +330,8 @@ def get_preview_data(
 
 # Preserve each player's IN/MAYBE status alongside their complete match history.
     for name, status in player_availability:
-        history = df[
-            df["Player"] == name
+        history = historical_df[
+            historical_df["Player"] == name
         ].sort_values("MatchID")
 
         appearances = []
