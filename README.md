@@ -101,7 +101,7 @@ because:
 
 ### 🌦️ Weather
 
-`/match` includes the forecast for the next scheduled match.
+`/match` includes the forecast for the next scheduled match, including temperature, feels-like temperature, precipitation, and wind.
 
 Because nothing improves an already questionable golf decision like having advance notice that it's going to rain.
 
@@ -125,11 +125,13 @@ It should not be interpreted as a golf handicap.
 
 If you attempt to interpret it as a golf handicap, the Fuck Ball will know.
 
+The Index measures relative competitive performance; match points, group wins, and possession of the Fuck Ball still determine what actually happened.
+
 ---
 
 ### 🤖 AI-Generated Sports Journalism
 
-CFB Bot uses an OpenAI model to produce analysis that absolutely nobody requested but everybody apparently needed.
+CFB's resident artificial broadcaster, **David FehertAI**, uses an OpenAI model to produce analysis that absolutely nobody requested but everybody apparently needed.
 
 The same OpenAI model produced...whatever this is.  *gestures vaguely at README*
 
@@ -188,6 +190,9 @@ Discord
    │
    ▼
 CFB Bot
+   │
+   ├── Commands
+   │     └── Shared command helpers
    │
    ├── MariaDB
    │     ├── Players
