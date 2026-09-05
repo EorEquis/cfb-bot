@@ -80,7 +80,8 @@ def register_commands(
         tee_time_1="First tee time in HH:MM format",
         tee_time_2="Second tee time in HH:MM format",
         tee_time_3="Third tee time in HH:MM format",
-        tee_time_4="Fourth tee time in HH:MM format"
+        tee_time_4="Fourth tee time in HH:MM format",
+        notes="Optional match notes"
     )
     async def addmatch(
         interaction: discord.Interaction,
@@ -89,7 +90,8 @@ def register_commands(
         tee_time_1: str,
         tee_time_2: str | None = None,
         tee_time_3: str | None = None,
-        tee_time_4: str | None = None
+        tee_time_4: str | None = None,
+        notes: str | None = None
     ):
         log_bot_usage(
             "addmatch",
@@ -138,12 +140,12 @@ def register_commands(
             SELECT id
             FROM matches
             WHERE match_date = %s
-              AND active = TRUE
+            AND active = TRUE
             LIMIT 1
             """,
             (match_date,)
         )
-        
+
         existing_match = cursor.fetchone()
 
         if existing_match:
@@ -155,7 +157,7 @@ def register_commands(
                 ephemeral=True
             )
             return
-        
+
         cursor.execute(
             """
             INSERT INTO matches
@@ -166,10 +168,11 @@ def register_commands(
                     tee_time_2,
                     tee_time_3,
                     tee_time_4,
+                    notes,
                     active
                 )
             VALUES
-                (%s, %s, %s, %s, %s, %s, TRUE)
+                (%s, %s, %s, %s, %s, %s, %s, TRUE)
             """,
             (
                 match_date,
@@ -177,7 +180,8 @@ def register_commands(
                 tee_time_1,
                 tee_time_2,
                 tee_time_3,
-                tee_time_4
+                tee_time_4,
+                notes
             )
         )
 
@@ -272,7 +276,7 @@ def register_commands(
             ephemeral=True
         )
 
-    # Update one editable field on an active match; optional tee times may be cleared.
+    # Update one editable field on an active match; optional fields may be cleared.
     @bot.tree.command(
         name="editmatch",
         description="Edit an existing CFB match",
@@ -285,6 +289,7 @@ def register_commands(
     @app_commands.choices(
         field=[
             app_commands.Choice(name="Location", value="location"),
+            app_commands.Choice(name="Notes", value="notes"),
             app_commands.Choice(name="Tee Time 1", value="tee_time_1"),
             app_commands.Choice(name="Tee Time 2", value="tee_time_2"),
             app_commands.Choice(name="Tee Time 3", value="tee_time_3"),
@@ -311,6 +316,7 @@ def register_commands(
 
         allowed_fields = {
             "location",
+            "notes",
             "tee_time_1",
             "tee_time_2",
             "tee_time_3",
