@@ -171,6 +171,8 @@ CFB Bot maintains:
 
 Because apparently this thing needed **observability**.
 
+This decision was later vindicated when a 365-character rule authorizing mid-swing harassment was falsely accused of breaking `/preview`, and the logs identified the actual perpetrator: an unfinished spreadsheet row carrying a concealed `NaN`.
+
 What began as:
 
 > "It would be neat if Discord could tell us who's playing Saturday."
