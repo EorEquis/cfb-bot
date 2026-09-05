@@ -290,6 +290,7 @@ def register_commands(
         field=[
             app_commands.Choice(name="Location", value="location"),
             app_commands.Choice(name="Notes", value="notes"),
+            app_commands.Choice(name="Special Rule", value="special_rule"),
             app_commands.Choice(name="Tee Time 1", value="tee_time_1"),
             app_commands.Choice(name="Tee Time 2", value="tee_time_2"),
             app_commands.Choice(name="Tee Time 3", value="tee_time_3"),
@@ -317,6 +318,7 @@ def register_commands(
         allowed_fields = {
             "location",
             "notes",
+            "special_rule",
             "tee_time_1",
             "tee_time_2",
             "tee_time_3",
@@ -576,7 +578,8 @@ def register_commands(
                     tee_time_2,
                     tee_time_3,
                     tee_time_4,
-                    notes
+                    notes,
+                    special_rule
                 FROM matches
                 WHERE active = TRUE
                 AND match_date >= CURDATE()
@@ -596,7 +599,8 @@ def register_commands(
                     tee_time_2,
                     tee_time_3,
                     tee_time_4,
-                    notes
+                    notes,
+                    special_rule
                 FROM matches
                 WHERE active = TRUE
                 AND match_date >= CURDATE()
@@ -649,7 +653,8 @@ def register_commands(
             tee_time_2,
             tee_time_3,
             tee_time_4,
-            notes
+            notes,
+            special_rule
         ) in matches:
 
             tee_times = [
@@ -684,6 +689,9 @@ def register_commands(
             if notes:
                 block += f"\n📝 **Notes:** {notes}"
 
+            if special_rule:
+                block += f"\n🎲 **Special Rule:** {special_rule}"
+
             blocks.append(block)
 
         heading = (
@@ -699,7 +707,7 @@ def register_commands(
         )
 
         if not show_all:
-            match_date, location, tee_time_1, _, _, _, _ = matches[0]
+            match_date, location, tee_time_1, _, _, _, _, _ = matches[0]
 
             if tee_time_1 is not None:
                 try:
@@ -1042,7 +1050,8 @@ def register_commands(
                 m.tee_time_1,
                 m.tee_time_2,
                 m.tee_time_3,
-                m.tee_time_4
+                m.tee_time_4,
+                m.special_rule
             FROM matches m
             WHERE m.active = TRUE
             AND m.match_date >= CURDATE()
@@ -1070,7 +1079,8 @@ def register_commands(
             tee_time_1,
             tee_time_2,
             tee_time_3,
-            tee_time_4
+            tee_time_4,
+            special_rule
         ) = match
 
         tee_times = [
@@ -1160,6 +1170,9 @@ def register_commands(
             )
 
             preview_data["Player Notes"] = player_notes
+
+            if special_rule:
+                preview_data["Weekly Special Rule"] = special_rule            
 
             mark_bot_usage_api_call(usage_id)
 
