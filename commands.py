@@ -911,7 +911,8 @@ def register_commands(
             )
 
         await interaction.response.send_message(
-            message
+            message,
+            allowed_mentions=discord.AllowedMentions.none()
         )
 
     # Generate AI-assisted CFB Sports Network power rankings and record API token usage.
@@ -1281,7 +1282,8 @@ def register_commands(
             return
 
         await interaction.response.send_message(
-            f'💬 **Favorite quote updated:** *"{quote}"*'
+            f'💬 **Favorite quote updated:** *"{quote}"*',
+            allowed_mentions=discord.AllowedMentions.none()
         )
 
     # Refresh stored Discord usernames and display names for active linked players.
