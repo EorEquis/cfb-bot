@@ -1440,7 +1440,15 @@ def register_commands(
                 tee_time_4
             FROM matches
             WHERE active = TRUE
-            AND match_date >= CURDATE()
+            AND TIMESTAMP(
+                match_date,
+                GREATEST(
+                    COALESCE(tee_time_1, '00:00:00'),
+                    COALESCE(tee_time_2, '00:00:00'),
+                    COALESCE(tee_time_3, '00:00:00'),
+                    COALESCE(tee_time_4, '00:00:00')
+                )
+            ) >= NOW()
             ORDER BY match_date
             LIMIT 1
             """
