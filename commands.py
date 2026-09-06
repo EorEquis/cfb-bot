@@ -8,6 +8,7 @@
 #           OpenAI model/version: GPT-5.6 Sol
 ###################
 
+import asyncio
 import discord
 import logging
 import mysql.connector
@@ -68,6 +69,41 @@ def register_commands(
         admin_role_id
     )
 
+    # Run one complete database operation on a worker thread so MariaDB never
+    # blocks Discord's event loop. Database resources stay on the same thread.
+    def database_operation(operation, commit=False):
+        connection = mysql.connector.connect(
+            connection_timeout=5,
+            host=mysql_host,
+            port=mysql_port,
+            user=mysql_user,
+            password=mysql_password,
+            database=mysql_database
+        )
+
+        cursor = None
+
+        try:
+            cursor = connection.cursor()
+            result = operation(cursor)
+
+            if commit:
+                connection.commit()
+
+            return result
+
+        except Exception:
+            if commit:
+                connection.rollback()
+
+            raise
+
+        finally:
+            if cursor is not None:
+                cursor.close()
+
+            connection.close()
+
 
     # Add a new active match after validating the date and any supplied tee times.
     @bot.tree.command(
@@ -95,7 +131,8 @@ def register_commands(
         tee_time_4: str | None = None,
         notes: str | None = None
     ):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "addmatch",
             interaction.user.id
         )
@@ -127,42 +164,37 @@ def register_commands(
                     )
                     return
 
-        connection = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
-        )
-
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            SELECT id
-            FROM matches
-            WHERE match_date = %s
-            AND active = TRUE
-            LIMIT 1
-            """,
-            (match_date,)
-        )
-
-        existing_match = cursor.fetchone()
-
-        if existing_match:
-            cursor.close()
-            connection.close()
-
-            await interaction.response.send_message(
-                f"A match already exists on **{match_date}**.",
-                ephemeral=True
+        def add_match_record(cursor):
+            cursor.execute(
+                """
+                SELECT id
+                FROM matches
+                WHERE match_date = %s
+                AND active = TRUE
+                LIMIT 1
+                """,
+                (match_date,)
             )
-            return
 
-        cursor.execute(
-            """
-            INSERT INTO matches
+            if cursor.fetchone():
+                return False
+
+            cursor.execute(
+                """
+                INSERT INTO matches
+                    (
+                        match_date,
+                        location,
+                        tee_time_1,
+                        tee_time_2,
+                        tee_time_3,
+                        tee_time_4,
+                        notes,
+                        active
+                    )
+                VALUES
+                    (%s, %s, %s, %s, %s, %s, %s, TRUE)
+                """,
                 (
                     match_date,
                     location,
@@ -170,27 +202,24 @@ def register_commands(
                     tee_time_2,
                     tee_time_3,
                     tee_time_4,
-                    notes,
-                    active
+                    notes
                 )
-            VALUES
-                (%s, %s, %s, %s, %s, %s, %s, TRUE)
-            """,
-            (
-                match_date,
-                location,
-                tee_time_1,
-                tee_time_2,
-                tee_time_3,
-                tee_time_4,
-                notes
             )
+
+            return True
+
+        match_added = await asyncio.to_thread(
+            database_operation,
+            add_match_record,
+            True
         )
 
-        connection.commit()
-
-        cursor.close()
-        connection.close()
+        if not match_added:
+            await interaction.response.send_message(
+                f"A match already exists on **{match_date}**.",
+                ephemeral=True
+            )
+            return
 
         await interaction.response.send_message(
             f"Match added for **{match_date}** at **{location}**.",
@@ -211,7 +240,8 @@ def register_commands(
         interaction: discord.Interaction,
         match_date: str
     ):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "deletematch",
             interaction.user.id
         )
@@ -223,55 +253,47 @@ def register_commands(
             )
             return
 
-        connection = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
+        def delete_match_record(cursor):
+            cursor.execute(
+                """
+                SELECT location
+                FROM matches
+                WHERE match_date = %s
+                  AND active = TRUE
+                LIMIT 1
+                """,
+                (match_date,)
+            )
+
+            match = cursor.fetchone()
+
+            if not match:
+                return None
+
+            cursor.execute(
+                """
+                UPDATE matches
+                SET active = FALSE
+                WHERE match_date = %s
+                  AND active = TRUE
+                """,
+                (match_date,)
+            )
+
+            return match[0]
+
+        location = await asyncio.to_thread(
+            database_operation,
+            delete_match_record,
+            True
         )
 
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            SELECT location
-            FROM matches
-            WHERE match_date = %s
-              AND active = TRUE
-            LIMIT 1
-            """,
-            (match_date,)
-        )
-
-        match = cursor.fetchone()
-
-        if not match:
-            cursor.close()
-            connection.close()
-
+        if location is None:
             await interaction.response.send_message(
                 f"No active match found for **{match_date}**.",
                 ephemeral=True
             )
             return
-
-        location = match[0]
-
-        cursor.execute(
-            """
-            UPDATE matches
-            SET active = FALSE
-            WHERE match_date = %s
-              AND active = TRUE
-            """,
-            (match_date,)
-        )
-
-        connection.commit()
-
-        cursor.close()
-        connection.close()
 
         await interaction.response.send_message(
             f"Deleted match for **{match_date}** at **{location}**.",
@@ -305,7 +327,8 @@ def register_commands(
         field: app_commands.Choice[str],
         value: str
     ):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "editmatch",
             interaction.user.id
         )
@@ -356,44 +379,34 @@ def register_commands(
                 )
                 return
 
-        connection = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
-        )
-
-        cursor = connection.cursor()
-
-        cursor.execute(
-            f"""
-            UPDATE matches
-            SET {field.value} = %s
-            WHERE match_date = %s
-              AND active = TRUE
-            """,
-            (
-                new_value,
-                match_date
+        def update_match_record(cursor):
+            cursor.execute(
+                f"""
+                UPDATE matches
+                SET {field.value} = %s
+                WHERE match_date = %s
+                  AND active = TRUE
+                """,
+                (
+                    new_value,
+                    match_date
+                )
             )
+
+            return cursor.rowcount
+
+        updated = await asyncio.to_thread(
+            database_operation,
+            update_match_record,
+            True
         )
 
-        if cursor.rowcount == 0:
-            connection.rollback()
-            cursor.close()
-            connection.close()
-
+        if updated == 0:
             await interaction.response.send_message(
                 f"No active match found for **{match_date}**.",
                 ephemeral=True
             )
             return
-
-        connection.commit()
-
-        cursor.close()
-        connection.close()
 
         if new_value is None:
             await interaction.response.send_message(
@@ -413,7 +426,8 @@ def register_commands(
         guild=dev_guild
     )
     async def helpbot(interaction: discord.Interaction):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "helpbot",
             interaction.user.id
         )
@@ -507,7 +521,8 @@ def register_commands(
         guild=dev_guild
     )
     async def index(interaction: discord.Interaction):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "index",
             interaction.user.id
         )
@@ -546,11 +561,6 @@ def register_commands(
         interaction: discord.Interaction,
         show: app_commands.Choice[str] | None = None
     ):
-        log_bot_usage(
-            "match",
-            interaction.user.id
-        )
-
         if not dev_channel_only(interaction):
             await interaction.response.send_message(
                 "CFB Bot is currently restricted to #cfb-bot-dev.",
@@ -558,21 +568,19 @@ def register_commands(
             )
             return
 
-        connection = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
-        )
+        await interaction.response.defer()
 
-        cursor = connection.cursor()
+        await asyncio.to_thread(
+            log_bot_usage,
+            "match",
+            interaction.user.id
+        )
 
         show_all = show is not None and show.value == "all"
 
-        if show_all:
+        def load_matches(cursor):
             cursor.execute(
-                """
+                f"""
                 SELECT
                     match_date,
                     location,
@@ -594,47 +602,23 @@ def register_commands(
                     )
                 ) >= NOW()
                 ORDER BY match_date
+                {"" if show_all else "LIMIT 1"}
                 """
             )
 
-            matches = cursor.fetchall()
-
-        else:
-            cursor.execute(
-                """
-                SELECT
-                    match_date,
-                    location,
-                    tee_time_1,
-                    tee_time_2,
-                    tee_time_3,
-                    tee_time_4,
-                    notes,
-                    special_rule
-                FROM matches
-                WHERE active = TRUE
-                AND TIMESTAMP(
-                    match_date,
-                    GREATEST(
-                        COALESCE(tee_time_1, '00:00:00'),
-                        COALESCE(tee_time_2, '00:00:00'),
-                        COALESCE(tee_time_3, '00:00:00'),
-                        COALESCE(tee_time_4, '00:00:00')
-                    )
-                ) >= NOW()
-                ORDER BY match_date
-                LIMIT 1
-                """
-            )
+            if show_all:
+                return cursor.fetchall()
 
             match_row = cursor.fetchone()
-            matches = [match_row] if match_row else []
+            return [match_row] if match_row else []
 
-        cursor.close()
-        connection.close()
+        matches = await asyncio.to_thread(
+            database_operation,
+            load_matches
+        )
 
         if not matches:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "There are no upcoming CFB matches scheduled."
             )
             return
@@ -729,7 +713,8 @@ def register_commands(
 
             if tee_time_1 is not None:
                 try:
-                    forecast_data = get_forecast(
+                    forecast_data = await asyncio.to_thread(
+                        get_forecast,
                         match_date,
                         tee_time_1
                     )
@@ -782,7 +767,7 @@ def register_commands(
                     "Unable to retrieve the forecast right now."
                 )
 
-        await interaction.response.send_message(message)
+        await interaction.followup.send(message)
 
     # Record the current player as MAYBE for the next match.
     @bot.tree.command(
@@ -811,7 +796,8 @@ def register_commands(
         guild=dev_guild
     )
     async def ping(interaction: discord.Interaction):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "ping",
             interaction.user.id
         )
@@ -841,11 +827,6 @@ def register_commands(
         interaction: discord.Interaction,
         player: str
     ):
-        log_bot_usage(
-            "player",
-            interaction.user.id
-        )
-
         if not dev_channel_only(interaction):
             await interaction.response.send_message(
                 "CFB Bot is currently restricted to #cfb-bot-dev.",
@@ -853,43 +834,44 @@ def register_commands(
             )
             return
 
-        conn = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
+        await interaction.response.defer()
+
+        await asyncio.to_thread(
+            log_bot_usage,
+            "player",
+            interaction.user.id
         )
 
-        cursor = conn.cursor()
+        def load_player(cursor):
+            cursor.execute(
+                """
+                SELECT
+                    player_name,
+                    discord_display_name,
+                    quote
+                FROM players
+                WHERE active = TRUE
+                AND (
+                        player_name = %s
+                    OR discord_display_name = %s
+                )
+                LIMIT 1
+                """,
+                (
+                    player,
+                    player
+                )
+            )
 
-        cursor.execute(
-            """
-            SELECT
-                player_name,
-                discord_display_name,
-                quote
-            FROM players
-            WHERE active = TRUE
-            AND (
-                    player_name = %s
-                OR discord_display_name = %s
-            )
-            LIMIT 1
-            """,
-            (
-                player,
-                player
-            )
+            return cursor.fetchone()
+
+        row = await asyncio.to_thread(
+            database_operation,
+            load_player
         )
-
-        row = cursor.fetchone()
-
-        cursor.close()
-        conn.close()
 
         if row is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f'No active CFB player found for "{player}".',
                 ephemeral=True
             )
@@ -897,7 +879,10 @@ def register_commands(
 
         player_name, display_name, quote = row
         
-        profile = get_player_profile(player_name)
+        profile = await asyncio.to_thread(
+            get_player_profile,
+            player_name
+        )
 
         message = (
             f"🏌️ **CFB PLAYER PROFILE**\n\n"
@@ -928,7 +913,7 @@ def register_commands(
                 f'*"{quote.strip()}"*'
             )
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             message,
             allowed_mentions=discord.AllowedMentions.none()
         )
@@ -941,11 +926,6 @@ def register_commands(
     )
     @admin_only
     async def power(interaction: discord.Interaction):
-        usage_id = log_bot_usage(
-            "power",
-            interaction.user.id
-        )
-
         if not dev_channel_only(interaction):
             await interaction.response.send_message(
                 "CFB Bot is currently restricted to #cfb-bot-dev.",
@@ -964,41 +944,47 @@ def register_commands(
             "📡 **CFB Sports Network is convening the completely unbiased ranking committee...**"
         )
 
-        conn = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
+        usage_id = await asyncio.to_thread(
+            log_bot_usage,
+            "power",
+            interaction.user.id
         )
 
-        cursor = conn.cursor()
+        def load_player_names(cursor):
+            cursor.execute(
+                """
+                SELECT player_name
+                FROM players
+                WHERE active = TRUE
+                ORDER BY player_name
+                """
+            )
 
-        cursor.execute(
-            """
-            SELECT player_name
-            FROM players
-            WHERE active = TRUE
-            ORDER BY player_name
-            """
+            return [
+                row[0]
+                for row in cursor.fetchall()
+            ]
+
+        player_names = await asyncio.to_thread(
+            database_operation,
+            load_player_names
         )
 
-        player_names = [
-            row[0]
-            for row in cursor.fetchall()
-        ]
-
-        cursor.close()
-        conn.close()
-
-        power_data = get_power_data(player_names)
+        power_data = await asyncio.to_thread(
+            get_power_data,
+            player_names
+        )
 
         try:
-            mark_bot_usage_api_call(usage_id)
+            await asyncio.to_thread(
+                mark_bot_usage_api_call,
+                usage_id
+            )
 
             result = await generate_power(power_data)
 
-            update_bot_usage_tokens(
+            await asyncio.to_thread(
+                update_bot_usage_tokens,
                 usage_id,
                 result["input_tokens"],
                 result["output_tokens"]
@@ -1031,17 +1017,20 @@ def register_commands(
     )
     @admin_only
     async def preview(interaction: discord.Interaction):
-        usage_id = log_bot_usage(
-            "preview",
-            interaction.user.id
-        )
-
         if not dev_channel_only(interaction):
             await interaction.response.send_message(
                 "CFB Bot is currently restricted to #cfb-bot-dev.",
                 ephemeral=True
             )
             return
+
+        await interaction.response.defer()
+
+        usage_id = await asyncio.to_thread(
+            log_bot_usage,
+            "preview",
+            interaction.user.id
+        )
 
         if not bot_admin_only(interaction):
             await interaction.response.send_message(
@@ -1050,52 +1039,99 @@ def register_commands(
             )
             return
 
-        connection = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
+        def load_preview_context(cursor):
+            cursor.execute(
+                """
+                SELECT
+                    m.id,
+                    m.match_date,
+                    m.location,
+                    m.tee_time_1,
+                    m.tee_time_2,
+                    m.tee_time_3,
+                    m.tee_time_4,
+                    m.special_rule
+                FROM matches m
+                WHERE m.active = TRUE
+                AND TIMESTAMP(
+                    m.match_date,
+                    GREATEST(
+                        COALESCE(m.tee_time_1, '00:00:00'),
+                        COALESCE(m.tee_time_2, '00:00:00'),
+                        COALESCE(m.tee_time_3, '00:00:00'),
+                        COALESCE(m.tee_time_4, '00:00:00')
+                    )
+                ) >= NOW()
+                ORDER BY m.match_date
+                LIMIT 1
+                """
+            )
+
+            match = cursor.fetchone()
+
+            if match is None:
+                return None, [], {}
+
+            match_id = match[0]
+
+            cursor.execute(
+                """
+                SELECT
+                    p.player_name,
+                    a.status
+                FROM availability a
+                JOIN players p
+                    ON p.id = a.player_id
+                WHERE a.match_id = %s
+                AND a.status IN ('in', 'maybe')
+                AND p.active = TRUE
+                ORDER BY
+                    CASE a.status
+                        WHEN 'in' THEN 1
+                        WHEN 'maybe' THEN 2
+                    END,
+                    p.player_name
+                """,
+                (match_id,)
+            )
+
+            player_availability = cursor.fetchall()
+            player_names = [row[0] for row in player_availability]
+
+            if not player_names:
+                return match, [], {}
+
+            cursor.execute(
+                """
+                SELECT
+                    player_name,
+                    notes
+                FROM players
+                WHERE active = TRUE
+                AND player_name IN ({})
+                AND notes IS NOT NULL
+                AND TRIM(notes) <> ''
+                """.format(
+                    ",".join(["%s"] * len(player_names))
+                ),
+                tuple(player_names)
+            )
+
+            player_notes = {
+                player_name: notes
+                for player_name, notes in cursor.fetchall()
+            }
+
+            return match, player_availability, player_notes
+
+        match, player_availability, player_notes = await asyncio.to_thread(
+            database_operation,
+            load_preview_context
         )
-
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            SELECT
-                m.id,
-                m.match_date,
-                m.location,
-                m.tee_time_1,
-                m.tee_time_2,
-                m.tee_time_3,
-                m.tee_time_4,
-                m.special_rule
-            FROM matches m
-            WHERE m.active = TRUE
-            AND TIMESTAMP(
-                m.match_date,
-                GREATEST(
-                    COALESCE(m.tee_time_1, '00:00:00'),
-                    COALESCE(m.tee_time_2, '00:00:00'),
-                    COALESCE(m.tee_time_3, '00:00:00'),
-                    COALESCE(m.tee_time_4, '00:00:00')
-                )
-            ) >= NOW()
-            ORDER BY m.match_date
-            LIMIT 1
-            """
-        )
-
-        match = cursor.fetchone()
 
         if match is None:
-            cursor.close()
-            connection.close()
-
-            await interaction.response.send_message(
-                "There are no upcoming CFB matches scheduled.",
-                ephemeral=True
+            await interaction.edit_original_response(
+                content="There are no upcoming CFB matches scheduled."
             )
             return
 
@@ -1121,75 +1157,25 @@ def register_commands(
             if tee_time is not None
         ]
 
-        cursor.execute(
-            """
-            SELECT
-                p.player_name,
-                a.status
-            FROM availability a
-            JOIN players p
-                ON p.id = a.player_id
-            WHERE a.match_id = %s
-            AND a.status IN ('in', 'maybe')
-            AND p.active = TRUE
-            ORDER BY
-                CASE a.status
-                    WHEN 'in' THEN 1
-                    WHEN 'maybe' THEN 2
-                END,
-                p.player_name
-            """,
-            (match_id,)
-        )
-
-        player_availability = cursor.fetchall()
-
-        player_names = [
-            row[0]
-            for row in player_availability
-        ]
-
-        if not player_names:
-            cursor.close()
-            connection.close()
-
-            await interaction.response.send_message(
-                "Nobody is currently marked IN or MAYBE for the next CFB match.",
-                ephemeral=True
+        if not player_availability:
+            await interaction.edit_original_response(
+                content=(
+                    "Nobody is currently marked IN or MAYBE "
+                    "for the next CFB match."
+                )
             )
             return
 
-        cursor.execute(
-            """
-            SELECT
-                player_name,
-                notes
-            FROM players
-            WHERE active = TRUE
-            AND player_name IN ({})
-            AND notes IS NOT NULL
-            AND TRIM(notes) <> ''
-            """.format(
-                ",".join(["%s"] * len(player_names))
-            ),
-            tuple(player_names)
-        )
-
-        player_notes = {
-            player_name: notes
-            for player_name, notes in cursor.fetchall()
-        }
-
-        cursor.close()
-        connection.close()
-
-        await interaction.response.send_message(
-            "📡 **CFB Sports Network is examining the field "
-            "and manufacturing irresponsible expectations...**"
+        await interaction.edit_original_response(
+            content=(
+                "📡 **CFB Sports Network is examining the field "
+                "and manufacturing irresponsible expectations...**"
+            )
         )
 
         try:
-            preview_data = get_preview_data(
+            preview_data = await asyncio.to_thread(
+                get_preview_data,
                 player_availability,
                 match_date,
                 location,
@@ -1201,11 +1187,15 @@ def register_commands(
             if special_rule:
                 preview_data["Weekly Special Rule"] = special_rule            
 
-            mark_bot_usage_api_call(usage_id)
+            await asyncio.to_thread(
+                mark_bot_usage_api_call,
+                usage_id
+            )
 
             result = await generate_preview(preview_data)
 
-            update_bot_usage_tokens(
+            await asyncio.to_thread(
+                update_bot_usage_tokens,
                 usage_id,
                 result["input_tokens"],
                 result["output_tokens"]
@@ -1243,7 +1233,8 @@ def register_commands(
         interaction: discord.Interaction,
         quote: str
     ):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "quote",
             interaction.user.id
         )
@@ -1271,34 +1262,27 @@ def register_commands(
             )
             return
 
-        conn = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
-        )
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            UPDATE players
-            SET quote = %s
-            WHERE discord_user_id = %s
-            AND active = TRUE
-            """,
-            (
-                quote,
-                interaction.user.id
+        def update_quote(cursor):
+            cursor.execute(
+                """
+                UPDATE players
+                SET quote = %s
+                WHERE discord_user_id = %s
+                AND active = TRUE
+                """,
+                (
+                    quote,
+                    interaction.user.id
+                )
             )
+
+            return cursor.rowcount
+
+        updated = await asyncio.to_thread(
+            database_operation,
+            update_quote,
+            True
         )
-
-        updated = cursor.rowcount
-
-        conn.commit()
-        cursor.close()
-        conn.close()
 
         if updated == 0:
             await interaction.response.send_message(
@@ -1320,11 +1304,6 @@ def register_commands(
     )
     @admin_only
     async def refresh(interaction: discord.Interaction):
-        log_bot_usage(
-            "refresh",
-            interaction.user.id
-        )
-
         if not dev_channel_only(interaction):
             await interaction.response.send_message(
                 "CFB Bot is currently restricted to #cfb-bot-dev.",
@@ -1339,29 +1318,34 @@ def register_commands(
             )
             return
 
-        connection = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
+        await interaction.response.defer(ephemeral=True)
+
+        await asyncio.to_thread(
+            log_bot_usage,
+            "refresh",
+            interaction.user.id
         )
 
-        cursor = connection.cursor()
+        def load_linked_players(cursor):
+            cursor.execute(
+                """
+                SELECT id, discord_user_id
+                FROM players
+                WHERE discord_user_id IS NOT NULL
+                  AND active = TRUE
+                """
+            )
 
-        cursor.execute(
-            """
-            SELECT id, discord_user_id
-            FROM players
-            WHERE discord_user_id IS NOT NULL
-              AND active = TRUE
-            """
+            return cursor.fetchall()
+
+        players = await asyncio.to_thread(
+            database_operation,
+            load_linked_players
         )
-
-        players = cursor.fetchall()
 
         updated = 0
         not_found = 0
+        name_updates = []
 
         for player_id, discord_user_id in players:
             try:
@@ -1372,13 +1356,7 @@ def register_commands(
                 not_found += 1
                 continue
 
-            cursor.execute(
-                """
-                UPDATE players
-                SET discord_username = %s,
-                    discord_display_name = %s
-                WHERE id = %s
-                """,
+            name_updates.append(
                 (
                     member.name,
                     member.display_name,
@@ -1388,11 +1366,25 @@ def register_commands(
 
             updated += 1
 
-        connection.commit()
-        cursor.close()
-        connection.close()
+        def update_player_names(cursor):
+            cursor.executemany(
+                """
+                UPDATE players
+                SET discord_username = %s,
+                    discord_display_name = %s
+                WHERE id = %s
+                """,
+                name_updates
+            )
 
-        await interaction.response.send_message(
+        if name_updates:
+            await asyncio.to_thread(
+                database_operation,
+                update_player_names,
+                True
+            )
+
+        await interaction.followup.send(
             f"🔄 Player refresh complete.\n"
             f"Updated: **{updated}**\n"
             f"Not found: **{not_found}**",
@@ -1407,7 +1399,8 @@ def register_commands(
         guild=dev_guild
     )
     async def rules(interaction: discord.Interaction):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "rules",
             interaction.user.id
         )
@@ -1434,7 +1427,8 @@ def register_commands(
         guild=dev_guild
     )
     async def who(interaction: discord.Interaction):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "who",
             interaction.user.id
         )
@@ -1446,48 +1440,60 @@ def register_commands(
             )
             return
 
-        connection = mysql.connector.connect(
-            host=mysql_host,
-            port=mysql_port,
-            user=mysql_user,
-            password=mysql_password,
-            database=mysql_database
+        def load_availability(cursor):
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    match_date,
+                    tee_time_1,
+                    tee_time_2,
+                    tee_time_3,
+                    tee_time_4
+                FROM matches
+                WHERE active = TRUE
+                AND TIMESTAMP(
+                    match_date,
+                    GREATEST(
+                        COALESCE(tee_time_1, '00:00:00'),
+                        COALESCE(tee_time_2, '00:00:00'),
+                        COALESCE(tee_time_3, '00:00:00'),
+                        COALESCE(tee_time_4, '00:00:00')
+                    )
+                ) >= NOW()
+                ORDER BY match_date
+                LIMIT 1
+                """
+            )
+
+            match = cursor.fetchone()
+
+            if match is None:
+                return None, []
+
+            cursor.execute(
+                """
+                SELECT
+                    p.player_name,
+                    COALESCE(a.status, 'unknown') AS status
+                FROM players p
+                LEFT JOIN availability a
+                    ON a.player_id = p.id
+                   AND a.match_id = %s
+                WHERE p.active = TRUE
+                ORDER BY p.player_name
+                """,
+                (match[0],)
+            )
+
+            return match, cursor.fetchall()
+
+        match, rows = await asyncio.to_thread(
+            database_operation,
+            load_availability
         )
-
-        cursor = connection.cursor()
-
-        # Find next active match
-        cursor.execute(
-            """
-            SELECT
-                id,
-                match_date,
-                tee_time_1,
-                tee_time_2,
-                tee_time_3,
-                tee_time_4
-            FROM matches
-            WHERE active = TRUE
-            AND TIMESTAMP(
-                match_date,
-                GREATEST(
-                    COALESCE(tee_time_1, '00:00:00'),
-                    COALESCE(tee_time_2, '00:00:00'),
-                    COALESCE(tee_time_3, '00:00:00'),
-                    COALESCE(tee_time_4, '00:00:00')
-                )
-            ) >= NOW()
-            ORDER BY match_date
-            LIMIT 1
-            """
-        )
-
-        match = cursor.fetchone()
 
         if match is None:
-            cursor.close()
-            connection.close()
-
             await interaction.response.send_message(
                 "There are no upcoming CFB matches scheduled."
             )
@@ -1505,32 +1511,12 @@ def register_commands(
             )
         ) * 4
 
-        cursor.execute(
-            """
-            SELECT
-                p.player_name,
-                COALESCE(a.status, 'unknown') AS status
-            FROM players p
-            LEFT JOIN availability a
-                ON a.player_id = p.id
-               AND a.match_id = %s
-            WHERE p.active = TRUE
-            ORDER BY p.player_name
-            """,
-            (match_id,)
-        )
-
-        rows = cursor.fetchall()
-
         in_count = sum(
             status == "in"
             for _, status in rows
         )
 
         spots_available = capacity - in_count
-
-        cursor.close()
-        connection.close()
 
         groups = {
             "in": [],
@@ -1566,11 +1552,6 @@ def register_commands(
     )
     @admin_only
     async def wrapup(interaction: discord.Interaction):
-        usage_id = log_bot_usage(
-            "wrapup",
-            interaction.user.id
-        )
-
         if not dev_channel_only(interaction):
             await interaction.response.send_message(
                 "CFB Bot is currently restricted to #cfb-bot-dev.",
@@ -1590,48 +1571,53 @@ def register_commands(
             "and preparing irresponsible conclusions...**"
         )
 
+        usage_id = await asyncio.to_thread(
+            log_bot_usage,
+            "wrapup",
+            interaction.user.id
+        )
+
         try:
-            match_data = get_latest_match_with_history()
-
-            conn = mysql.connector.connect(
-                host=mysql_host,
-                port=mysql_port,
-                user=mysql_user,
-                password=mysql_password,
-                database=mysql_database
+            match_data = await asyncio.to_thread(
+                get_latest_match_with_history
             )
 
-            cursor = conn.cursor()
+            def load_player_notes(cursor):
+                cursor.execute(
+                    """
+                    SELECT
+                        player_name,
+                        notes
+                    FROM players
+                    WHERE active = TRUE
+                    AND notes IS NOT NULL
+                    AND TRIM(notes) <> ''
+                    """
+                )
 
-            cursor.execute(
-                """
-                SELECT
-                    player_name,
-                    notes
-                FROM players
-                WHERE active = TRUE
-                AND notes IS NOT NULL
-                AND TRIM(notes) <> ''
-                """
+                return {
+                    player_name: notes
+                    for player_name, notes in cursor.fetchall()
+                }
+
+            player_notes = await asyncio.to_thread(
+                database_operation,
+                load_player_notes
             )
-
-            player_notes = {
-                player_name: notes
-                for player_name, notes in cursor.fetchall()
-            }
-
-            cursor.close()
-            conn.close()
 
             match_data["Player Notes"] = player_notes            
 
-            mark_bot_usage_api_call(usage_id)
+            await asyncio.to_thread(
+                mark_bot_usage_api_call,
+                usage_id
+            )
 
             result = await generate_wrapup(match_data)
 
             recap = result["text"]
 
-            update_bot_usage_tokens(
+            await asyncio.to_thread(
+                update_bot_usage_tokens,
                 usage_id,
                 result["input_tokens"],
                 result["output_tokens"]
