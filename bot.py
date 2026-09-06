@@ -43,6 +43,14 @@ if not isinstance(LOG_LEVEL, int):
 # IDs and the MySQL port are converted to integers because environment
 # variables are loaded as strings.
 ADMIN_DISCORD_ID = int(os.getenv("ADMIN_DISCORD_ID"))
+ADMIN_ROLE_ID = os.getenv("ADMIN_ROLE_ID")
+
+if not ADMIN_ROLE_ID or not ADMIN_ROLE_ID.isdigit():
+    raise ValueError(
+        "ADMIN_ROLE_ID must be configured as a numeric Discord role ID."
+    )
+
+ADMIN_ROLE_ID = int(ADMIN_ROLE_ID)
 BOT_VERSION = os.getenv("BOT_VERSION")
 DEV_CHANNEL_ID = int(os.getenv("DEV_CHANNEL_ID"))
 GUILD_ID = int(os.getenv("GUILD_ID"))
@@ -111,6 +119,7 @@ register_commands(
     BOT_VERSION,
     DEV_GUILD,
     ADMIN_DISCORD_ID,
+    ADMIN_ROLE_ID,
     MYSQL_HOST,
     MYSQL_PORT,
     MYSQL_DATABASE,
