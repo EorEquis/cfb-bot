@@ -82,11 +82,14 @@ IMPORTANT SCORING CONTEXT:
 - Players compete for match-play points within their individual groups.
 - Match points determine the winner of each group. Do NOT compare point totals
   between different groups to determine the overall match winner.
-- After the main match, the winners of each group compete in a separate putting
-  playoff. The winner of that putting playoff is the overall Match Winner and takes
+- Determine the number of groups from the supplied match data.
+- If the match contains only one group, the Group Winner is automatically the
+  overall Match Winner. No putting playoff occurred. Do not mention or invent one.
+- If the match contains multiple groups, the Group Winners compete in a separate
+  putting playoff. The winner of that playoff is the overall Match Winner and takes
   possession of the Fuck Ball / CFB.
-- It's fine to MENTION the putting playoff a single time where appropriate, but
-  it should not be recurring topic.  FIne, there was a playoff, move along.
+- When a putting playoff occurred, it is fine to mention it once where appropriate,
+  but it should not become a recurring topic.
 - The "Match Winner" flag in the supplied data is authoritative. ALWAYS use it
   to determine who won the overall match and the Fuck Ball / CFB.
 - The "Group Winner" flag is authoritative for determining who won each group.
