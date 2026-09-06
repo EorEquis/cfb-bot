@@ -122,6 +122,10 @@ def apply_availability(
     cursor = connection.cursor()
 
     try:
+        # Lock the shared match row so concurrent availability changes make
+        # their capacity decisions one at a time.
+        connection.start_transaction()
+
         cursor.execute(
             """
             SELECT
@@ -144,12 +148,14 @@ def apply_availability(
             ) >= NOW()
             ORDER BY match_date
             LIMIT 1
+            FOR UPDATE
             """
         )
 
         match = cursor.fetchone()
 
         if match is None:
+            connection.rollback()
             return None, "There are no upcoming CFB matches scheduled."
 
         (
@@ -198,6 +204,7 @@ def apply_availability(
                 in_count = cursor.fetchone()[0]
 
                 if in_count >= capacity:
+                    connection.rollback()
                     return (
                         None,
                         f"That match is currently full — "
@@ -222,6 +229,10 @@ def apply_availability(
             f"for {match_date:%A, %B %d}.",
             None
         )
+
+    except Exception:
+        connection.rollback()
+        raise
 
     finally:
         cursor.close()
