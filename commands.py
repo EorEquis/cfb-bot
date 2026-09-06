@@ -584,7 +584,15 @@ def register_commands(
                     special_rule
                 FROM matches
                 WHERE active = TRUE
-                AND match_date >= CURDATE()
+                AND TIMESTAMP(
+                    match_date,
+                    GREATEST(
+                        COALESCE(tee_time_1, '00:00:00'),
+                        COALESCE(tee_time_2, '00:00:00'),
+                        COALESCE(tee_time_3, '00:00:00'),
+                        COALESCE(tee_time_4, '00:00:00')
+                    )
+                ) >= NOW()
                 ORDER BY match_date
                 """
             )
@@ -605,7 +613,15 @@ def register_commands(
                     special_rule
                 FROM matches
                 WHERE active = TRUE
-                AND match_date >= CURDATE()
+                AND TIMESTAMP(
+                    match_date,
+                    GREATEST(
+                        COALESCE(tee_time_1, '00:00:00'),
+                        COALESCE(tee_time_2, '00:00:00'),
+                        COALESCE(tee_time_3, '00:00:00'),
+                        COALESCE(tee_time_4, '00:00:00')
+                    )
+                ) >= NOW()
                 ORDER BY match_date
                 LIMIT 1
                 """
@@ -1057,7 +1073,15 @@ def register_commands(
                 m.special_rule
             FROM matches m
             WHERE m.active = TRUE
-            AND m.match_date >= CURDATE()
+            AND TIMESTAMP(
+                m.match_date,
+                GREATEST(
+                    COALESCE(m.tee_time_1, '00:00:00'),
+                    COALESCE(m.tee_time_2, '00:00:00'),
+                    COALESCE(m.tee_time_3, '00:00:00'),
+                    COALESCE(m.tee_time_4, '00:00:00')
+                )
+            ) >= NOW()
             ORDER BY m.match_date
             LIMIT 1
             """
