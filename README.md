@@ -238,6 +238,9 @@ The project follows a sophisticated enterprise development methodology:
 
 All production changes are developed on feature branches and merged through pull requests.
 
+Repository rules allow the pile of rocks to open pull requests but prevent it from merging them.  
+This is not discrimination. It is geology-aware access control.
+
 This is wildly excessive for the number of users involved.
 
 We regret nothing.
