@@ -436,7 +436,7 @@ class AvailabilityPlayerView(discord.ui.View):
         ]
 
         return (
-            f"Select the player to mark **{self.status.upper()}**.\\n"
+            f"Select the player to mark **{self.status.upper()}**.\n"
             f"Currently selected: **{selected_name}**"
         )
 
