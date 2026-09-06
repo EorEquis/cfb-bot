@@ -95,6 +95,120 @@ def admin_only(func):
     return func
 
     
+def apply_availability(
+    player_id: int,
+    player_name: str,
+    status: str
+):
+    connection = mysql.connector.connect(
+        host=_mysql_host,
+        port=_mysql_port,
+        database=_mysql_database,
+        user=_mysql_user,
+        password=_mysql_password
+    )
+
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                id,
+                match_date,
+                tee_time_1,
+                tee_time_2,
+                tee_time_3,
+                tee_time_4
+            FROM matches
+            WHERE active = TRUE
+            AND match_date >= CURDATE()
+            ORDER BY match_date
+            LIMIT 1
+            """
+        )
+
+        match = cursor.fetchone()
+
+        if match is None:
+            return None, "There are no upcoming CFB matches scheduled."
+
+        (
+            match_id,
+            match_date,
+            tee_time_1,
+            tee_time_2,
+            tee_time_3,
+            tee_time_4
+        ) = match
+
+        capacity = sum(
+            tee_time is not None
+            for tee_time in (
+                tee_time_1,
+                tee_time_2,
+                tee_time_3,
+                tee_time_4
+            )
+        ) * 4
+
+        if status == "in":
+            cursor.execute(
+                """
+                SELECT status
+                FROM availability
+                WHERE match_id = %s
+                AND player_id = %s
+                """,
+                (match_id, player_id)
+            )
+
+            current = cursor.fetchone()
+
+            if current is None or current[0] != "in":
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM availability
+                    WHERE match_id = %s
+                    AND status = 'in'
+                    """,
+                    (match_id,)
+                )
+
+                in_count = cursor.fetchone()[0]
+
+                if in_count >= capacity:
+                    return (
+                        None,
+                        f"That match is currently full — "
+                        f"{in_count} of {capacity} spots are claimed."
+                    )
+
+        cursor.execute(
+            """
+            INSERT INTO availability
+                (match_id, player_id, status)
+            VALUES (%s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                status = VALUES(status)
+            """,
+            (match_id, player_id, status)
+        )
+
+        connection.commit()
+
+        return (
+            f"**{player_name}** is **{status.upper()}** "
+            f"for {match_date:%A, %B %d}.",
+            None
+        )
+
+    finally:
+        cursor.close()
+        connection.close()
+
+
 def bot_admin_only(interaction: discord.Interaction):
     # Permanent/bootstrap admin from .env
     if interaction.user.id == _admin_discord_id:
@@ -231,6 +345,215 @@ async def player_autocomplete(
     return choices
 
 
+########## Availability UI ##########
+
+class AvailabilityPlayerSelect(discord.ui.Select):
+    def __init__(self, availability_view):
+        self.availability_view = availability_view
+
+        page_start = availability_view.page * 25
+        page_players = availability_view.players[
+            page_start:page_start + 25
+        ]
+
+        options = []
+
+        for player_id, player_name, display_name in page_players:
+            if display_name:
+                label = f"{player_name} ({display_name})"
+            else:
+                label = player_name
+
+            options.append(
+                discord.SelectOption(
+                    label=label[:100],
+                    value=str(player_id),
+                    default=(
+                        player_id
+                        == availability_view.selected_player_id
+                    )
+                )
+            )
+
+        super().__init__(
+            placeholder="Select a CFB player",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(
+        self,
+        interaction: discord.Interaction
+    ):
+        self.availability_view.selected_player_id = int(
+            self.values[0]
+        )
+
+        self.availability_view.refresh_items()
+
+        await interaction.response.edit_message(
+            content=self.availability_view.prompt(),
+            view=self.availability_view
+        )
+
+
+class AvailabilityPlayerView(discord.ui.View):
+    def __init__(
+        self,
+        invoking_admin_id: int,
+        status: str,
+        players,
+        default_player_id: int
+    ):
+        super().__init__(timeout=120)
+
+        self.invoking_admin_id = invoking_admin_id
+        self.status = status
+        self.players = players
+        self.player_names = {
+            player_id: player_name
+            for player_id, player_name, _ in players
+        }
+        self.selected_player_id = default_player_id
+        self.page_count = (
+            (len(players) + 24) // 25
+        )
+        self.page = next(
+            (
+                index // 25
+                for index, player in enumerate(players)
+                if player[0] == default_player_id
+            ),
+            0
+        )
+
+        self.refresh_items()
+
+    def prompt(self):
+        selected_name = self.player_names[
+            self.selected_player_id
+        ]
+
+        return (
+            f"Select the player to mark **{self.status.upper()}**.\\n"
+            f"Currently selected: **{selected_name}**"
+        )
+
+    def refresh_items(self):
+        self.clear_items()
+
+        self.add_item(
+            AvailabilityPlayerSelect(self)
+        )
+
+        self.previous_page.disabled = self.page == 0
+        self.next_page.disabled = (
+            self.page >= self.page_count - 1
+        )
+
+        if self.page_count > 1:
+            self.add_item(self.previous_page)
+            self.add_item(self.next_page)
+
+        self.add_item(self.confirm)
+
+    async def interaction_check(
+        self,
+        interaction: discord.Interaction
+    ) -> bool:
+        if interaction.user.id != self.invoking_admin_id:
+            await interaction.response.send_message(
+                "This player picker belongs to another administrator.",
+                ephemeral=True
+            )
+            return False
+
+        if not bot_admin_only(interaction):
+            await interaction.response.send_message(
+                "You are not authorized to perform this action.",
+                ephemeral=True
+            )
+            return False
+
+        return True
+
+    @discord.ui.button(
+        label="Previous",
+        style=discord.ButtonStyle.secondary
+    )
+    async def previous_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        self.page -= 1
+        self.refresh_items()
+
+        await interaction.response.edit_message(
+            content=self.prompt(),
+            view=self
+        )
+
+    @discord.ui.button(
+        label="Next",
+        style=discord.ButtonStyle.secondary
+    )
+    async def next_page(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        self.page += 1
+        self.refresh_items()
+
+        await interaction.response.edit_message(
+            content=self.prompt(),
+            view=self
+        )
+
+    @discord.ui.button(
+        label="Confirm",
+        style=discord.ButtonStyle.green
+    )
+    async def confirm(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        player_id = self.selected_player_id
+        player_name = self.player_names[player_id]
+
+        message, error = apply_availability(
+            player_id,
+            player_name,
+            self.status
+        )
+
+        if error:
+            await interaction.response.edit_message(
+                content=error,
+                view=None
+            )
+            self.stop()
+            return
+
+        await interaction.response.edit_message(
+            content=(
+                f"Updated **{player_name}** to "
+                f"**{self.status.upper()}**."
+            ),
+            view=None
+        )
+
+        await interaction.followup.send(
+            message,
+            ephemeral=False
+        )
+
+        self.stop()
+
+
 async def set_availability(
     interaction: discord.Interaction,
     status: str
@@ -257,128 +580,93 @@ async def set_availability(
 
     cursor = connection.cursor()
 
-    cursor.execute(
-        """
-        SELECT id, player_name
-        FROM players
-        WHERE discord_user_id = %s
-          AND active = TRUE
-        """,
-        (interaction.user.id,)
-    )
+    try:
+        cursor.execute(
+            """
+            SELECT id, player_name
+            FROM players
+            WHERE discord_user_id = %s
+            AND active = TRUE
+            """,
+            (interaction.user.id,)
+        )
 
-    player = cursor.fetchone()
+        invoking_player = cursor.fetchone()
+        is_admin = bot_admin_only(interaction)
 
-    if player is None:
+        if is_admin:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    player_name,
+                    discord_display_name
+                FROM players
+                WHERE active = TRUE
+                ORDER BY player_name
+                """
+            )
+
+            players = cursor.fetchall()
+        else:
+            players = None
+
+    finally:
         cursor.close()
         connection.close()
 
+    if invoking_player is None and not is_admin:
         await interaction.response.send_message(
             "I couldn't find you in the CFB player list.",
             ephemeral=True
         )
         return
 
-    player_id, player_name = player
+    if not is_admin:
+        player_id, player_name = invoking_player
 
-    cursor.execute(
-        """
-        SELECT
-            id,
-            match_date,
-            tee_time_1,
-            tee_time_2,
-            tee_time_3,
-            tee_time_4
-        FROM matches
-        WHERE active = TRUE
-        AND match_date >= CURDATE()
-        ORDER BY match_date
-        LIMIT 1
-        """
-    )
+        message, error = apply_availability(
+            player_id,
+            player_name,
+            status
+        )
 
-    match = cursor.fetchone()
+        if error:
+            await interaction.response.send_message(
+                error,
+                ephemeral=True
+            )
+            return
 
-    if match is None:
-        cursor.close()
-        connection.close()
+        await interaction.response.send_message(message)
+        return
 
+    if not players:
         await interaction.response.send_message(
-            "There are no upcoming CFB matches scheduled.",
+            "There are no active CFB players.",
             ephemeral=True
         )
         return
 
-    match_id, match_date, tee_time_1, tee_time_2, tee_time_3, tee_time_4 = match
+    if invoking_player is not None:
+        default_player_id = invoking_player[0]
+    else:
+        default_player_id = players[0][0]
 
-    capacity = sum(
-        tee_time is not None
-        for tee_time in (
-            tee_time_1,
-            tee_time_2,
-            tee_time_3,
-            tee_time_4
-        )
-    ) * 4
-
-    if status == "in":
-        cursor.execute(
-            """
-            SELECT status
-            FROM availability
-            WHERE match_id = %s
-            AND player_id = %s
-            """,
-            (match_id, player_id)
-        )
-
-        current = cursor.fetchone()
-
-        if current is None or current[0] != "in":
-            cursor.execute(
-                """
-                SELECT COUNT(*)
-                FROM availability
-                WHERE match_id = %s
-                AND status = 'in'
-                """,
-                (match_id,)
-            )
-
-            in_count = cursor.fetchone()[0]
-
-            if in_count >= capacity:
-                cursor.close()
-                connection.close()
-
-                await interaction.response.send_message(
-                    f"That match is currently full — {in_count} of {capacity} spots are claimed.",
-                    ephemeral=True
-                )
-                return
-
-    cursor.execute(
-        """
-        INSERT INTO availability
-            (match_id, player_id, status)
-        VALUES (%s, %s, %s)
-        ON DUPLICATE KEY UPDATE
-            status = VALUES(status)
-        """,
-        (match_id, player_id, status)
+    view = AvailabilityPlayerView(
+        invoking_admin_id=interaction.user.id,
+        status=status,
+        players=players,
+        default_player_id=default_player_id
     )
-
-    connection.commit()
-    cursor.close()
-    connection.close()
 
     await interaction.response.send_message(
-        f"**{player_name}** is **{status.upper()}** "
-        f"for {match_date:%A, %B %d}."
+        view.prompt(),
+        view=view,
+        ephemeral=True
     )
-    
-    
+
+
 def split_discord_message(text, limit=2000):
     chunks = []
 
