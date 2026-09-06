@@ -96,7 +96,12 @@ DEV_GUILD = discord.Object(id=GUILD_ID)
 # The CommandTree holds the bot's slash commands.
 class CFBBot(discord.Client):
     def __init__(self):
-        super().__init__(intents=intents)
+        # Treat all message content as untrusted by default. Literal mention
+        # text remains visible without notifying users, roles, @here, or @everyone.
+        super().__init__(
+            intents=intents,
+            allowed_mentions=discord.AllowedMentions.none()
+        )
         self.tree = app_commands.CommandTree(self)
 
     async def setup_hook(self):
