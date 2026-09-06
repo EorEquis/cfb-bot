@@ -19,7 +19,7 @@ SPREADSHEET_ID = os.getenv("CFB_SHEET_ID")
 
 # Return all rows belonging to the most recently recorded match.
 def get_latest_match():
-    df = get_matches()
+    df = get_completed_matches()
 
     latest_match_id = df["MatchID"].max()
 
@@ -66,7 +66,7 @@ def get_latest_match_data():
 
 # Enrich the latest match with each player's prior history and match highlights.
 def get_latest_match_with_history():
-    df = get_matches()
+    df = get_completed_matches()
 
     latest_match_id = df["MatchID"].max()
     # Exclude the current match so comparisons use only prior results.
@@ -166,9 +166,37 @@ def get_matches():
     return df
 
 
+# Return only matches whose result rows are complete and internally valid.
+def get_completed_matches():
+    df = get_matches()
+
+    required_columns = [
+        "Player Points",
+        "Ending Hole",
+        "Match Performance"
+    ]
+
+    complete_match_ids = []
+
+    for match_id, match_df in df.groupby("MatchID"):
+        has_complete_results = (
+            match_df[required_columns].notna().all().all()
+        )
+        has_one_match_winner = (
+            (match_df["Match Winner"] == 1).sum() == 1
+        )
+
+        if has_complete_results and has_one_match_winner:
+            complete_match_ids.append(match_id)
+
+    return df[
+        df["MatchID"].isin(complete_match_ids)
+    ].copy()
+
+
 # Build the statistical profile used by the /player command.
 def get_player_profile(player_name):
-    matches_df = get_matches()
+    matches_df = get_completed_matches()
     players_df = get_players()
 
     # Match player names case-insensitively to tolerate harmless spacing/case differences.
@@ -239,7 +267,7 @@ def get_players():
 
 # Build the compact player-history dataset supplied to the /power AI prompt.
 def get_power_data(player_names):
-    matches_df = get_matches()
+    matches_df = get_completed_matches()
     players_df = get_players()
 
     players = []
@@ -312,16 +340,8 @@ def get_preview_data(
     location,
     tee_times
 ):
-    df = get_matches()
-
-
-    # Exclude the upcoming match and any future matches from player history.
-    historical_df = df[
-        pd.to_datetime(
-            df["Match Date"],
-            errors="coerce"
-        ).dt.date < match_date
-    ].copy()
+    # Completed results are the only valid source of player history.
+    historical_df = get_completed_matches()
     
     # Give the preview model explicit timing context for how imminent the match is.
     days_until_match = (match_date - date.today()).days
@@ -354,7 +374,9 @@ def get_preview_data(
         })
 
     # Find the current holder of the CFB / Fuck Ball
-    match_winners = df[df["Match Winner"] == 1].sort_values("MatchID")
+    match_winners = historical_df[
+        historical_df["Match Winner"] == 1
+    ].sort_values("MatchID")
 
     current_holder = None
 
