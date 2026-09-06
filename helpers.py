@@ -20,6 +20,7 @@ _mysql_database = None
 _mysql_user = None
 _mysql_password = None
 _admin_discord_id = None
+_admin_role_id = None
 
 
 def configure_helpers(
@@ -28,7 +29,8 @@ def configure_helpers(
     mysql_database,
     mysql_user,
     mysql_password,
-    admin_discord_id
+    admin_discord_id,
+    admin_role_id
 ):
     global _mysql_host
     global _mysql_port
@@ -36,6 +38,7 @@ def configure_helpers(
     global _mysql_user
     global _mysql_password
     global _admin_discord_id
+    global _admin_role_id
 
     _mysql_host = mysql_host
     _mysql_port = mysql_port
@@ -43,6 +46,7 @@ def configure_helpers(
     _mysql_user = mysql_user
     _mysql_password = mysql_password
     _admin_discord_id = admin_discord_id
+    _admin_role_id = admin_role_id
 
     
 async def active_match_autocomplete(
@@ -222,8 +226,8 @@ def bot_admin_only(interaction: discord.Interaction):
     if interaction.user.id == _admin_discord_id:
         return True
 
-    # Discord Admins role
-    if any(role.name == "Admins" for role in interaction.user.roles):
+    # Configured Discord administrator role
+    if any(role.id == _admin_role_id for role in interaction.user.roles):
         return True
 
     return False

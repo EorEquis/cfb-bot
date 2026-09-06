@@ -49,6 +49,7 @@ def register_commands(
     bot_version,
     dev_guild,
     admin_discord_id,
+    admin_role_id,
     mysql_host,
     mysql_port,
     mysql_database,
@@ -63,7 +64,8 @@ def register_commands(
         mysql_database,
         mysql_user,
         mysql_password,
-        admin_discord_id
+        admin_discord_id,
+        admin_role_id
     )
 
 
