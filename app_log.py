@@ -10,6 +10,8 @@
 
 import logging
 import mysql.connector
+import queue
+import threading
 
 
 def write_log(
@@ -24,6 +26,7 @@ def write_log(
 ):
     
     conn = mysql.connector.connect(
+        connection_timeout=5,
         host=mysql_host,
         port=mysql_port,
         database=mysql_database,
@@ -77,18 +80,41 @@ class DatabaseLogHandler(logging.Handler):
         self.mysql_database = mysql_database
         self.mysql_user = mysql_user
         self.mysql_password = mysql_password
+
+        self.log_queue = queue.SimpleQueue()
+        self.worker = threading.Thread(
+            target=self._write_queued_logs,
+            daemon=True,
+            name="cfb-database-logger"
+        )
+        self.worker.start()
+
+    def _write_queued_logs(self):
+        while True:
+            severity, message, source = self.log_queue.get()
+
+            try:
+                write_log(
+                    self.mysql_host,
+                    self.mysql_port,
+                    self.mysql_database,
+                    self.mysql_user,
+                    self.mysql_password,
+                    severity,
+                    message,
+                    source
+                )
+            except Exception as e:
+                print(f"LOGGING ERROR: {e}")
         
     def emit(self, record):
         try:
-            write_log(
-                self.mysql_host,
-                self.mysql_port,
-                self.mysql_database,
-                self.mysql_user,
-                self.mysql_password,
-                record.levelname,
-                record.getMessage(),
-                record.name
+            self.log_queue.put(
+                (
+                    record.levelname,
+                    record.getMessage(),
+                    record.name
+                )
             )
         except Exception as e:
             print(f"LOGGING ERROR: {e}")

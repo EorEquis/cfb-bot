@@ -8,6 +8,7 @@
 #           OpenAI model/version: GPT-5.6 Sol
 ###################
 
+import asyncio
 import discord
 import logging
 import mysql.connector
@@ -68,10 +69,11 @@ def register_commands(
         admin_role_id
     )
 
-    # Run a complete database operation with consistent commit, rollback,
-    # cursor cleanup, and connection cleanup behavior.
+    # Run one complete database operation on a worker thread so MariaDB never
+    # blocks Discord's event loop. Database resources stay on the same thread.
     def database_operation(operation, commit=False):
         connection = mysql.connector.connect(
+            connection_timeout=5,
             host=mysql_host,
             port=mysql_port,
             user=mysql_user,
@@ -129,7 +131,8 @@ def register_commands(
         tee_time_4: str | None = None,
         notes: str | None = None
     ):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "addmatch",
             interaction.user.id
         )
@@ -205,7 +208,8 @@ def register_commands(
 
             return True
 
-        match_added = database_operation(
+        match_added = await asyncio.to_thread(
+            database_operation,
             add_match_record,
             True
         )
@@ -236,7 +240,8 @@ def register_commands(
         interaction: discord.Interaction,
         match_date: str
     ):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "deletematch",
             interaction.user.id
         )
@@ -277,7 +282,8 @@ def register_commands(
 
             return match[0]
 
-        location = database_operation(
+        location = await asyncio.to_thread(
+            database_operation,
             delete_match_record,
             True
         )
@@ -321,7 +327,8 @@ def register_commands(
         field: app_commands.Choice[str],
         value: str
     ):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "editmatch",
             interaction.user.id
         )
@@ -388,7 +395,8 @@ def register_commands(
 
             return cursor.rowcount
 
-        updated = database_operation(
+        updated = await asyncio.to_thread(
+            database_operation,
             update_match_record,
             True
         )
@@ -418,7 +426,8 @@ def register_commands(
         guild=dev_guild
     )
     async def helpbot(interaction: discord.Interaction):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "helpbot",
             interaction.user.id
         )
@@ -512,7 +521,8 @@ def register_commands(
         guild=dev_guild
     )
     async def index(interaction: discord.Interaction):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "index",
             interaction.user.id
         )
@@ -551,17 +561,20 @@ def register_commands(
         interaction: discord.Interaction,
         show: app_commands.Choice[str] | None = None
     ):
-        log_bot_usage(
-            "match",
-            interaction.user.id
-        )
-
         if not dev_channel_only(interaction):
             await interaction.response.send_message(
                 "CFB Bot is currently restricted to #cfb-bot-dev.",
                 ephemeral=True
             )
             return
+
+        await interaction.response.defer()
+
+        await asyncio.to_thread(
+            log_bot_usage,
+            "match",
+            interaction.user.id
+        )
 
         show_all = show is not None and show.value == "all"
 
@@ -599,12 +612,13 @@ def register_commands(
             match_row = cursor.fetchone()
             return [match_row] if match_row else []
 
-        matches = database_operation(
+        matches = await asyncio.to_thread(
+            database_operation,
             load_matches
         )
 
         if not matches:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "There are no upcoming CFB matches scheduled."
             )
             return
@@ -699,7 +713,8 @@ def register_commands(
 
             if tee_time_1 is not None:
                 try:
-                    forecast_data = get_forecast(
+                    forecast_data = await asyncio.to_thread(
+                        get_forecast,
                         match_date,
                         tee_time_1
                     )
@@ -752,7 +767,7 @@ def register_commands(
                     "Unable to retrieve the forecast right now."
                 )
 
-        await interaction.response.send_message(message)
+        await interaction.followup.send(message)
 
     # Record the current player as MAYBE for the next match.
     @bot.tree.command(
@@ -781,7 +796,8 @@ def register_commands(
         guild=dev_guild
     )
     async def ping(interaction: discord.Interaction):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "ping",
             interaction.user.id
         )
@@ -811,17 +827,20 @@ def register_commands(
         interaction: discord.Interaction,
         player: str
     ):
-        log_bot_usage(
-            "player",
-            interaction.user.id
-        )
-
         if not dev_channel_only(interaction):
             await interaction.response.send_message(
                 "CFB Bot is currently restricted to #cfb-bot-dev.",
                 ephemeral=True
             )
             return
+
+        await interaction.response.defer()
+
+        await asyncio.to_thread(
+            log_bot_usage,
+            "player",
+            interaction.user.id
+        )
 
         def load_player(cursor):
             cursor.execute(
@@ -846,12 +865,13 @@ def register_commands(
 
             return cursor.fetchone()
 
-        row = database_operation(
+        row = await asyncio.to_thread(
+            database_operation,
             load_player
         )
 
         if row is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 f'No active CFB player found for "{player}".',
                 ephemeral=True
             )
@@ -859,7 +879,8 @@ def register_commands(
 
         player_name, display_name, quote = row
         
-        profile = get_player_profile(
+        profile = await asyncio.to_thread(
+            get_player_profile,
             player_name
         )
 
@@ -892,7 +913,7 @@ def register_commands(
                 f'*"{quote.strip()}"*'
             )
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             message,
             allowed_mentions=discord.AllowedMentions.none()
         )
@@ -905,11 +926,6 @@ def register_commands(
     )
     @admin_only
     async def power(interaction: discord.Interaction):
-        usage_id = log_bot_usage(
-            "power",
-            interaction.user.id
-        )
-
         if not dev_channel_only(interaction):
             await interaction.response.send_message(
                 "CFB Bot is currently restricted to #cfb-bot-dev.",
@@ -928,6 +944,12 @@ def register_commands(
             "📡 **CFB Sports Network is convening the completely unbiased ranking committee...**"
         )
 
+        usage_id = await asyncio.to_thread(
+            log_bot_usage,
+            "power",
+            interaction.user.id
+        )
+
         def load_player_names(cursor):
             cursor.execute(
                 """
@@ -943,22 +965,26 @@ def register_commands(
                 for row in cursor.fetchall()
             ]
 
-        player_names = database_operation(
+        player_names = await asyncio.to_thread(
+            database_operation,
             load_player_names
         )
 
-        power_data = get_power_data(
+        power_data = await asyncio.to_thread(
+            get_power_data,
             player_names
         )
 
         try:
-            mark_bot_usage_api_call(
+            await asyncio.to_thread(
+                mark_bot_usage_api_call,
                 usage_id
             )
 
             result = await generate_power(power_data)
 
-            update_bot_usage_tokens(
+            await asyncio.to_thread(
+                update_bot_usage_tokens,
                 usage_id,
                 result["input_tokens"],
                 result["output_tokens"]
@@ -991,17 +1017,20 @@ def register_commands(
     )
     @admin_only
     async def preview(interaction: discord.Interaction):
-        usage_id = log_bot_usage(
-            "preview",
-            interaction.user.id
-        )
-
         if not dev_channel_only(interaction):
             await interaction.response.send_message(
                 "CFB Bot is currently restricted to #cfb-bot-dev.",
                 ephemeral=True
             )
             return
+
+        await interaction.response.defer()
+
+        usage_id = await asyncio.to_thread(
+            log_bot_usage,
+            "preview",
+            interaction.user.id
+        )
 
         if not bot_admin_only(interaction):
             await interaction.response.send_message(
@@ -1095,14 +1124,14 @@ def register_commands(
 
             return match, player_availability, player_notes
 
-        match, player_availability, player_notes = database_operation(
+        match, player_availability, player_notes = await asyncio.to_thread(
+            database_operation,
             load_preview_context
         )
 
         if match is None:
-            await interaction.response.send_message(
-                "There are no upcoming CFB matches scheduled.",
-                ephemeral=True
+            await interaction.edit_original_response(
+                content="There are no upcoming CFB matches scheduled."
             )
             return
 
@@ -1129,19 +1158,24 @@ def register_commands(
         ]
 
         if not player_availability:
-            await interaction.response.send_message(
-                "Nobody is currently marked IN or MAYBE for the next CFB match.",
-                ephemeral=True
+            await interaction.edit_original_response(
+                content=(
+                    "Nobody is currently marked IN or MAYBE "
+                    "for the next CFB match."
+                )
             )
             return
 
-        await interaction.response.send_message(
-            "📡 **CFB Sports Network is examining the field "
-            "and manufacturing irresponsible expectations...**"
+        await interaction.edit_original_response(
+            content=(
+                "📡 **CFB Sports Network is examining the field "
+                "and manufacturing irresponsible expectations...**"
+            )
         )
 
         try:
-            preview_data = get_preview_data(
+            preview_data = await asyncio.to_thread(
+                get_preview_data,
                 player_availability,
                 match_date,
                 location,
@@ -1153,13 +1187,15 @@ def register_commands(
             if special_rule:
                 preview_data["Weekly Special Rule"] = special_rule            
 
-            mark_bot_usage_api_call(
+            await asyncio.to_thread(
+                mark_bot_usage_api_call,
                 usage_id
             )
 
             result = await generate_preview(preview_data)
 
-            update_bot_usage_tokens(
+            await asyncio.to_thread(
+                update_bot_usage_tokens,
                 usage_id,
                 result["input_tokens"],
                 result["output_tokens"]
@@ -1197,7 +1233,8 @@ def register_commands(
         interaction: discord.Interaction,
         quote: str
     ):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "quote",
             interaction.user.id
         )
@@ -1241,7 +1278,8 @@ def register_commands(
 
             return cursor.rowcount
 
-        updated = database_operation(
+        updated = await asyncio.to_thread(
+            database_operation,
             update_quote,
             True
         )
@@ -1266,11 +1304,6 @@ def register_commands(
     )
     @admin_only
     async def refresh(interaction: discord.Interaction):
-        log_bot_usage(
-            "refresh",
-            interaction.user.id
-        )
-
         if not dev_channel_only(interaction):
             await interaction.response.send_message(
                 "CFB Bot is currently restricted to #cfb-bot-dev.",
@@ -1285,6 +1318,14 @@ def register_commands(
             )
             return
 
+        await interaction.response.defer(ephemeral=True)
+
+        await asyncio.to_thread(
+            log_bot_usage,
+            "refresh",
+            interaction.user.id
+        )
+
         def load_linked_players(cursor):
             cursor.execute(
                 """
@@ -1297,7 +1338,8 @@ def register_commands(
 
             return cursor.fetchall()
 
-        players = database_operation(
+        players = await asyncio.to_thread(
+            database_operation,
             load_linked_players
         )
 
@@ -1336,12 +1378,13 @@ def register_commands(
             )
 
         if name_updates:
-            database_operation(
+            await asyncio.to_thread(
+                database_operation,
                 update_player_names,
                 True
             )
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"🔄 Player refresh complete.\n"
             f"Updated: **{updated}**\n"
             f"Not found: **{not_found}**",
@@ -1356,7 +1399,8 @@ def register_commands(
         guild=dev_guild
     )
     async def rules(interaction: discord.Interaction):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "rules",
             interaction.user.id
         )
@@ -1383,7 +1427,8 @@ def register_commands(
         guild=dev_guild
     )
     async def who(interaction: discord.Interaction):
-        log_bot_usage(
+        await asyncio.to_thread(
+            log_bot_usage,
             "who",
             interaction.user.id
         )
@@ -1443,7 +1488,8 @@ def register_commands(
 
             return match, cursor.fetchall()
 
-        match, rows = database_operation(
+        match, rows = await asyncio.to_thread(
+            database_operation,
             load_availability
         )
 
@@ -1506,11 +1552,6 @@ def register_commands(
     )
     @admin_only
     async def wrapup(interaction: discord.Interaction):
-        usage_id = log_bot_usage(
-            "wrapup",
-            interaction.user.id
-        )
-
         if not dev_channel_only(interaction):
             await interaction.response.send_message(
                 "CFB Bot is currently restricted to #cfb-bot-dev.",
@@ -1530,8 +1571,16 @@ def register_commands(
             "and preparing irresponsible conclusions...**"
         )
 
+        usage_id = await asyncio.to_thread(
+            log_bot_usage,
+            "wrapup",
+            interaction.user.id
+        )
+
         try:
-            match_data = get_latest_match_with_history()
+            match_data = await asyncio.to_thread(
+                get_latest_match_with_history
+            )
 
             def load_player_notes(cursor):
                 cursor.execute(
@@ -1551,13 +1600,15 @@ def register_commands(
                     for player_name, notes in cursor.fetchall()
                 }
 
-            player_notes = database_operation(
+            player_notes = await asyncio.to_thread(
+                database_operation,
                 load_player_notes
             )
 
             match_data["Player Notes"] = player_notes            
 
-            mark_bot_usage_api_call(
+            await asyncio.to_thread(
+                mark_bot_usage_api_call,
                 usage_id
             )
 
@@ -1565,7 +1616,8 @@ def register_commands(
 
             recap = result["text"]
 
-            update_bot_usage_tokens(
+            await asyncio.to_thread(
+                update_bot_usage_tokens,
                 usage_id,
                 result["input_tokens"],
                 result["output_tokens"]

@@ -9,6 +9,7 @@
 #           OpenAI model/version: GPT-5.6 Sol
 ###################
 
+import asyncio
 import discord
 import mysql.connector
 from discord import app_commands
@@ -86,6 +87,15 @@ async def active_match_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> list[app_commands.Choice[str]]:
+    def load_matches():
+        connection = mysql.connector.connect(
+            connection_timeout=5,
+            host=_mysql_host,
+            port=_mysql_port,
+            database=_mysql_database,
+            user=_mysql_user,
+            password=_mysql_password
+        )
 
     def load_matches(cursor):
         cursor.execute(
@@ -99,7 +109,10 @@ async def active_match_autocomplete(
 
         return cursor.fetchall()
 
-    matches = _database_operation(load_matches)
+    matches = await asyncio.to_thread(
+        _database_operation,
+        load_matches
+    )
 
     choices = []
 
@@ -128,6 +141,7 @@ def apply_availability(
     status: str
 ):
     connection = mysql.connector.connect(
+        connection_timeout=5,
         host=_mysql_host,
         port=_mysql_port,
         database=_mysql_database,
@@ -138,6 +152,9 @@ def apply_availability(
     cursor = None
 
     try:
+        # Lock the shared match row so concurrent availability changes make
+        # their capacity decisions one at a time.
+        connection.start_transaction()
         cursor = connection.cursor()
         cursor.execute(
             """
@@ -161,12 +178,14 @@ def apply_availability(
             ) >= NOW()
             ORDER BY match_date
             LIMIT 1
+            FOR UPDATE
             """
         )
 
         match = cursor.fetchone()
 
         if match is None:
+            connection.rollback()
             return None, "There are no upcoming CFB matches scheduled."
 
         (
@@ -215,6 +234,7 @@ def apply_availability(
                 in_count = cursor.fetchone()[0]
 
                 if in_count >= capacity:
+                    connection.rollback()
                     return (
                         None,
                         f"That match is currently full — "
@@ -333,7 +353,10 @@ async def player_autocomplete(
 
         return cursor.fetchall()
 
-    rows = _database_operation(load_players)
+    rows = await asyncio.to_thread(
+        _database_operation,
+        load_players
+    )
 
     choices = []
 
@@ -532,7 +555,8 @@ class AvailabilityPlayerView(discord.ui.View):
         player_id = self.selected_player_id
         player_name = self.player_names[player_id]
 
-        message, error = apply_availability(
+        message, error = await asyncio.to_thread(
+            apply_availability,
             player_id,
             player_name,
             self.status
@@ -566,7 +590,8 @@ async def set_availability(
     interaction: discord.Interaction,
     status: str
 ):
-    log_bot_usage(
+    await asyncio.to_thread(
+        log_bot_usage,
         status,
         interaction.user.id
     )
@@ -612,7 +637,10 @@ async def set_availability(
 
         return invoking_player, players
 
-    invoking_player, players = _database_operation(load_players)
+    invoking_player, players = await asyncio.to_thread(
+        _database_operation,
+        load_players
+    )
 
     if invoking_player is None and not is_admin:
         await interaction.response.send_message(
@@ -624,7 +652,8 @@ async def set_availability(
     if not is_admin:
         player_id, player_name = invoking_player
 
-        message, error = apply_availability(
+        message, error = await asyncio.to_thread(
+            apply_availability,
             player_id,
             player_name,
             status
