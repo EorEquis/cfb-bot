@@ -321,6 +321,7 @@ This arrangement has proven remarkably effective.
 - Discord's UI occasionally hides useful things for sport.
 - The Fuck Ball's motivations remain unknowable.
 - The spreadsheet occasionally knows the future and shares it with functions that weren’t emotionally prepared.
+- OpenAI’s AI support bot may instruct you to ask an AI how to deal with the AI support bot, creating a feedback loop so perfectly Douglas Adams that someone should check whether the answer is 42.
 
 ---
 
