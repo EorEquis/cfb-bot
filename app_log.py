@@ -34,24 +34,34 @@ def write_log(
         password=mysql_password
     )
 
-    cursor = conn.cursor()
+    cursor = None
 
-    cursor.execute(
-        """
-        INSERT INTO bot_log
-            (severity, source, message)
-        VALUES (%s, %s, %s)
-        """,
-        (
-            severity,
-            source,
-            message
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO bot_log
+                (severity, source, message)
+            VALUES (%s, %s, %s)
+            """,
+            (
+                severity,
+                source,
+                message
+            )
         )
-    )
 
-    conn.commit()
-    cursor.close()
-    conn.close()
+        conn.commit()
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        conn.close()
 
 
 class DatabaseLogHandler(logging.Handler):

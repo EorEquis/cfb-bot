@@ -24,6 +24,39 @@ _admin_discord_id = None
 _admin_role_id = None
 
 
+def _database_operation(operation, commit=False):
+    connection = mysql.connector.connect(
+        host=_mysql_host,
+        port=_mysql_port,
+        database=_mysql_database,
+        user=_mysql_user,
+        password=_mysql_password
+    )
+
+    cursor = None
+
+    try:
+        cursor = connection.cursor()
+        result = operation(cursor)
+
+        if commit:
+            connection.commit()
+
+        return result
+
+    except Exception:
+        if commit:
+            connection.rollback()
+
+        raise
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        connection.close()
+
+
 def configure_helpers(
     mysql_host,
     mysql_port,
@@ -64,25 +97,22 @@ async def active_match_autocomplete(
             password=_mysql_password
         )
 
-        cursor = connection.cursor()
+    def load_matches(cursor):
+        cursor.execute(
+            """
+            SELECT match_date, location
+            FROM matches
+            WHERE active = TRUE
+            ORDER BY match_date
+            """
+        )
 
-        try:
-            cursor.execute(
-                """
-                SELECT match_date, location
-                FROM matches
-                WHERE active = TRUE
-                ORDER BY match_date
-                """
-            )
+        return cursor.fetchall()
 
-            return cursor.fetchall()
-
-        finally:
-            cursor.close()
-            connection.close()
-
-    matches = await asyncio.to_thread(load_matches)
+    matches = await asyncio.to_thread(
+        _database_operation,
+        load_matches
+    )
 
     choices = []
 
@@ -119,13 +149,13 @@ def apply_availability(
         password=_mysql_password
     )
 
-    cursor = connection.cursor()
+    cursor = None
 
     try:
         # Lock the shared match row so concurrent availability changes make
         # their capacity decisions one at a time.
         connection.start_transaction()
-
+        cursor = connection.cursor()
         cursor.execute(
             """
             SELECT
@@ -235,7 +265,9 @@ def apply_availability(
         raise
 
     finally:
-        cursor.close()
+        if cursor is not None:
+            cursor.close()
+
         connection.close()
 
 
@@ -258,112 +290,73 @@ def log_bot_usage(
     command_name,
     discord_user_id
 ):
-    conn = mysql.connector.connect(
-        connection_timeout=5,
-        host=_mysql_host,
-        port=_mysql_port,
-        database=_mysql_database,
-        user=_mysql_user,
-        password=_mysql_password
-    )
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        INSERT INTO bot_usage
+    def insert_usage(cursor):
+        cursor.execute(
+            """
+            INSERT INTO bot_usage
+                (
+                    command_name,
+                    discord_user_id,
+                    api_call
+                )
+            VALUES (%s, %s, FALSE)
+            """,
             (
                 command_name,
-                discord_user_id,
-                api_call
+                discord_user_id
             )
-        VALUES (%s, %s, FALSE)
-        """,
-        (
-            command_name,
-            discord_user_id
         )
-    )
 
-    usage_id = cursor.lastrowid
+        return cursor.lastrowid
 
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-    return usage_id
+    return _database_operation(insert_usage, commit=True)
 
 
 def mark_bot_usage_api_call(usage_id):
-    conn = mysql.connector.connect(
-        connection_timeout=5,
-        host=_mysql_host,
-        port=_mysql_port,
-        database=_mysql_database,
-        user=_mysql_user,
-        password=_mysql_password
-    )
+    def mark_api_call(cursor):
+        cursor.execute(
+            """
+            UPDATE bot_usage
+            SET api_call = TRUE
+            WHERE id = %s
+            """,
+            (usage_id,)
+        )
 
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        UPDATE bot_usage
-        SET api_call = TRUE
-        WHERE id = %s
-        """,
-        (usage_id,)
-    )
-
-    conn.commit()
-    cursor.close()
-    conn.close()
+    _database_operation(mark_api_call, commit=True)
     
     
 async def player_autocomplete(
     interaction: discord.Interaction,
     current: str
 ):
-    def load_players():
-        conn = mysql.connector.connect(
-            connection_timeout=5,
-            host=_mysql_host,
-            port=_mysql_port,
-            database=_mysql_database,
-            user=_mysql_user,
-            password=_mysql_password
+    def load_players(cursor):
+        cursor.execute(
+            """
+            SELECT
+                player_name,
+                discord_display_name
+            FROM players
+            WHERE active = TRUE
+            AND (
+                    player_name LIKE %s
+                OR discord_display_name LIKE %s
+            )
+            ORDER BY player_name
+            LIMIT 25
+            """,
+            (
+                f"%{current}%",
+                f"%{current}%"
+            )
         )
 
-        cursor = conn.cursor()
+        return cursor.fetchall()
 
-        try:
-            cursor.execute(
-                """
-                SELECT
-                    player_name,
-                    discord_display_name
-                FROM players
-                WHERE active = TRUE
-                AND (
-                        player_name LIKE %s
-                    OR discord_display_name LIKE %s
-                )
-                ORDER BY player_name
-                LIMIT 25
-                """,
-                (
-                    f"%{current}%",
-                    f"%{current}%"
-                )
-            )
-
-            return cursor.fetchall()
-
-        finally:
-            cursor.close()
-            conn.close()
-
-    rows = await asyncio.to_thread(load_players)
+    rows = await asyncio.to_thread(
+        _database_operation,
+        load_players
+    )
 
     choices = []
 
@@ -612,55 +605,42 @@ async def set_availability(
 
     is_admin = bot_admin_only(interaction)
 
-    def load_players():
-        connection = mysql.connector.connect(
-            connection_timeout=5,
-            host=_mysql_host,
-            port=_mysql_port,
-            database=_mysql_database,
-            user=_mysql_user,
-            password=_mysql_password
+    def load_players(cursor):
+        cursor.execute(
+            """
+            SELECT id, player_name
+            FROM players
+            WHERE discord_user_id = %s
+            AND active = TRUE
+            """,
+            (interaction.user.id,)
         )
 
-        cursor = connection.cursor()
+        invoking_player = cursor.fetchone()
 
-        try:
+        if is_admin:
             cursor.execute(
                 """
-                SELECT id, player_name
+                SELECT
+                    id,
+                    player_name,
+                    discord_display_name
                 FROM players
-                WHERE discord_user_id = %s
-                AND active = TRUE
-                """,
-                (interaction.user.id,)
+                WHERE active = TRUE
+                ORDER BY player_name
+                """
             )
 
-            invoking_player = cursor.fetchone()
+            players = cursor.fetchall()
+        else:
+            players = None
 
-            if is_admin:
-                cursor.execute(
-                    """
-                    SELECT
-                        id,
-                        player_name,
-                        discord_display_name
-                    FROM players
-                    WHERE active = TRUE
-                    ORDER BY player_name
-                    """
-                )
+        return invoking_player, players
 
-                players = cursor.fetchall()
-            else:
-                players = None
-
-            return invoking_player, players
-
-        finally:
-            cursor.close()
-            connection.close()
-
-    invoking_player, players = await asyncio.to_thread(load_players)
+    invoking_player, players = await asyncio.to_thread(
+        _database_operation,
+        load_players
+    )
 
     if invoking_player is None and not is_admin:
         await interaction.response.send_message(
@@ -744,32 +724,20 @@ def update_bot_usage_tokens(
     input_tokens,
     output_tokens
 ):
-    conn = mysql.connector.connect(
-        connection_timeout=5,
-        host=_mysql_host,
-        port=_mysql_port,
-        database=_mysql_database,
-        user=_mysql_user,
-        password=_mysql_password
-    )
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        UPDATE bot_usage
-        SET
-            input_tokens = %s,
-            output_tokens = %s
-        WHERE id = %s
-        """,
-        (
-            input_tokens,
-            output_tokens,
-            usage_id
+    def update_tokens(cursor):
+        cursor.execute(
+            """
+            UPDATE bot_usage
+            SET
+                input_tokens = %s,
+                output_tokens = %s
+            WHERE id = %s
+            """,
+            (
+                input_tokens,
+                output_tokens,
+                usage_id
+            )
         )
-    )
 
-    conn.commit()
-    cursor.close()
-    conn.close()    
+    _database_operation(update_tokens, commit=True)
