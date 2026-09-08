@@ -146,6 +146,115 @@ involving television contracts, corporate sponsors, and significantly more athle
 
 ---
 
+### 🎰 Tan City Sportsbook
+
+At some point somebody asked the established CFB product-development question:
+
+> **"You know what would be funny?"**
+
+The answer, unfortunately, was **an AI sportsbook**.
+
+Tan City Sportsbook is a simulated match-winner market built on top of the same CFB data used by the bot. It contains no real money, no actual gambling service, and no discernible evidence that this distinction has made the participants behave more responsibly.
+
+The system has three production components:
+
+- `bookie.py` — an AI market maker that studies the upcoming field, CFB Index data, historical results, and its own prior pricing decisions, then creates American-odds prices with a house margin.
+- `gambler.py` — a population of AI betting agents with persistent bankrolls, individual personality traits, private wagering histories, and the legally significant ability to say **PASS**.
+- `settlement.py` — deterministic Python that settles wagers from the actual match winner, because there are limits to how much financial arithmetic should be entrusted to a language model.
+
+A typical lifecycle looks roughly like this:
+
+```text
+Upcoming CFB match
+      │
+      ▼
+AI Bookie
+      │
+      ├── studies field / Index / history
+      ├── creates prices
+      └── remembers its own reasoning
+      │
+      ▼
+Tan City Market
+      │
+      ▼
+AI Gamblers
+      │
+      ├── inspect the available prices
+      ├── apply individual personalities
+      ├── consult their own private histories
+      ├── BET or PASS
+      └── risk imaginary money with alarming sincerity
+      │
+      ▼
+Actual CFB Match
+      │
+      ▼
+Deterministic Settlement
+      │
+      ├── winner from the CFB spreadsheet
+      ├── payouts to winning gamblers
+      └── profit/loss to the house
+```
+
+#### The agents
+
+The gamblers are deliberately **not** 100 copies of the same expected-value calculator.
+
+Each agent has persistent behavioral traits including:
+
+- Risk tolerance
+- Loss aversion
+- Contrarianism
+- Confidence
+- Bankroll discipline
+
+They also retain their own prior wager reasoning, so experience can affect later decisions without turning the entire population into one shared hive mind.
+
+The bookie likewise retains private reasoning about its own markets.
+
+Those memories are intentionally separated:
+
+- The bookie cannot read gamblers' private wager reasons.
+- Gamblers cannot read the bookie's private pricing reasons.
+- Gamblers do not get each other's private reasoning.
+
+Apparently our fake golf casino has an information-security model.
+
+#### David has money on this
+
+**David FehertAI is also one of the gamblers.**
+
+This was a mistake in exactly the way everyone hoped it would be.
+
+David's configured personality combines extreme confidence, extreme contrarianism, very high risk tolerance, very low loss aversion, and bankroll discipline best described as:
+
+> **a raccoon holding a stolen credit card**
+
+His wagers can be supplied to `/preview` and `/wrapup` as private emotional context. The broadcasts do not become accounting reports; instead David may become suspiciously enthusiastic about one golfer, personally wounded by another, or forced to narrate the financial consequences of his own terrible judgment while pretending to remain a professional journalist.
+
+Tan City can therefore produce the previously unnecessary situation in which the league's AI broadcaster is covering a golf match while personally holding an imaginary financial position on its outcome.
+
+We have reviewed the architecture and determined that this is a feature.
+
+#### Accounting, somehow
+
+Despite everything above, the money handling is intentionally boring.
+
+- Stakes are deducted when wagers are placed.
+- Winning payouts return stake plus profit.
+- Losing wagers return zero.
+- House result is total stakes minus total payouts.
+- Settlement is transactional and idempotent.
+
+The AI decides what it thinks.
+
+Python decides what everybody owes.
+
+This separation has already allowed an 89-wager stress settlement to reconcile **exactly to the penny**, putting Tan City ahead of several historical financial institutions.
+
+---
+
 ### 🔐 Administration
 
 Administrative commands are authorized through:
@@ -200,7 +309,10 @@ CFB Bot
    │     ├── Players
    │     ├── Matches
    │     ├── Availability
-   │     └── Logs
+   │     ├── Logs
+   │     ├── Tan City markets
+   │     ├── AI gamblers
+   │     └── Wagers / bankrolls
    │
    ├── Google Sheets
    │     └── Historical scoring / CFB Index
@@ -208,7 +320,12 @@ CFB Bot
    ├── Weather API
    │
    └── OpenAI
-         └── Unnecessarily dramatic golf analysis
+         ├── David FehertAI
+         │     └── Unnecessarily dramatic golf analysis
+         │
+         └── Tan City Sportsbook
+               ├── AI bookie
+               └── AI gamblers
 ```
 
 The application runs as a Windows service using NSSM.
@@ -269,7 +386,7 @@ Don't.
 Seriously.
 
 This software was written for one extremely specific golf league with its own database, scoring system, Discord server, 
-spreadsheets, terminology, traditions, and obscene championship artifact.
+spreadsheets, terminology, traditions, obscene championship artifact, and now an imaginary AI wagering economy.
 
 If you've somehow arrived here looking for a general-purpose golf league management system, there has been a terrible misunderstanding.
 
@@ -284,6 +401,7 @@ OpenAI
 A weather service
 NSSM
 An unreasonable tolerance for edge cases
+A willingness to ask "should the broadcaster have a bankroll?" and answer "obviously"
 ```
 
 Configuration secrets belong in:
@@ -321,6 +439,8 @@ This arrangement has proven remarkably effective.
 - Discord's UI occasionally hides useful things for sport.
 - The Fuck Ball's motivations remain unknowable.
 - The spreadsheet occasionally knows the future and shares it with functions that weren’t emotionally prepared.
+- One hundred synthetic gamblers can now form strong opinions about two guys playing weekend golf.
+- David FehertAI has access to a bankroll despite substantial evidence that he should not.
 - OpenAI’s AI support bot may instruct you to ask an AI how to deal with the AI support bot, creating a feedback loop so perfectly Douglas Adams that someone should check whether the answer is 42.
 
 ---
@@ -332,6 +452,8 @@ Future development will proceed according to the established CFB product-managem
 > "You know what would be funny?"
 
 This methodology has achieved a disturbing 100% feature-generation rate.
+
+It is worth noting that this exact process is how we ended up operating a simulated sportsbook.
 
 ---
 
@@ -351,13 +473,16 @@ CFB Bot is not affiliated with:
 - The USGA
 - Any respectable sporting organization
 - College Football (listed separately from respectable sporting organizations for reasons)
+- Any casino, sportsbook, gaming commission, or person who thinks Tan City involves real money
 - Anyone possessing good judgment
 
 Statistics produced by CFB Bot may be mathematically valid.
 
 Conclusions drawn from those statistics are another matter entirely.
 
-AI-generated commentary may contain sarcasm, profanity, excessive confidence, or observations that cause players to reconsider their life choices.
+Tan City Sportsbook uses fictional bankrolls and simulated wagers. It is an AI-agent experiment wrapped around a private golf league, not a gambling service. If you somehow manage to lose real money because David FehertAI faded a golfer with a 153.77 CFB Index, several important things have gone wrong outside this repository.
+
+AI-generated commentary may contain sarcasm, profanity, excessive confidence, financial regret, or observations that cause players to reconsider their life choices.
 
 Use accordingly.
 
@@ -370,6 +495,8 @@ Golf is temporary.
 Data is forever.
 
 Git tags are apparently also forever.
+
+Synthetic gambling debts are settled transactionally.
 
 But above all:
 
