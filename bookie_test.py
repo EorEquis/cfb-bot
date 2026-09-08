@@ -4,7 +4,7 @@
 #           Reads completed match history and current normalized indexes from
 #           Google Sheets, reads the upcoming match/field from MariaDB, and asks
 #           OpenAI to price the current field with American moneyline odds.
-# Notes   : Console output only. Does not write odds, wagers, or balances.
+# Notes   : Console output if WRITE_MARKET is false, otherwise stores results in market_prices
 ###################
 
 from dotenv import load_dotenv
@@ -90,6 +90,14 @@ def validate_market(market, field):
                 f"Invalid odds for player_id {price.get('player_id')}: "
                 "American odds must be +100 or greater, or -100 or less."
             )
+            
+        reason = price.get("reason")
+
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(
+                f"Invalid reason for player_id {price.get('player_id')}: "
+                "reason must be a non-empty string."
+            )            
 
 
 # Save one complete market snapshot to market_prices.
@@ -103,15 +111,17 @@ def save_market_prices(match_id, prices):
             INSERT INTO market_prices (
                 match_id,
                 player_id,
-                odds_american
+                odds_american,
+                reason
             )
-            VALUES (%s, %s, %s)
+            VALUES (%s, %s, %s, %s)
             """,
             [
                 (
                     match_id,
                     price["player_id"],
                     price["odds_american"],
+                    price["reason"],
                 )
                 for price in prices
             ],
@@ -196,10 +206,46 @@ def get_current_field(match_id):
         connection.close()
 
 
+# Read all previous market prices already posted for this match.
+def get_previous_market_prices(match_id):
+    connection = get_db_connection()
+    cursor = connection.cursor(dictionary=True)
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                mp.market_price_id,
+                mp.player_id,
+                p.player_name,
+                mp.odds_american,
+                mp.reason,
+                mp.effective_at
+            FROM market_prices mp
+            INNER JOIN players p
+                ON p.id = mp.player_id
+            WHERE mp.match_id = %s
+            ORDER BY
+                mp.effective_at,
+                mp.market_price_id
+            """,
+            (match_id,),
+        )
+
+        return cursor.fetchall()
+
+    finally:
+        cursor.close()
+        connection.close()
+        
+
 # Combine database field information with spreadsheet history/current indexes.
 def build_bookie_data(match, field):
     completed_matches = sheets.get_completed_matches()
     current_players = sheets.get_players()
+    previous_market_prices = get_previous_market_prices(match["id"])
+    current_wagers = get_current_wagers(match["id"])
+    current_wager_exposure = build_wager_exposure(current_wagers)    
 
     player_data = []
 
@@ -269,6 +315,18 @@ def build_bookie_data(match, field):
             ],
         },
         "field": player_data,
+        "previous_market_prices": [
+            {
+                "market_price_id": row["market_price_id"],
+                "player_id": row["player_id"],
+                "player": row["player_name"],
+                "odds_american": row["odds_american"],
+                "reason": row["reason"],
+                "effective_at": str(row["effective_at"]),
+            }
+            for row in previous_market_prices
+        ],
+        "current_wager_exposure": current_wager_exposure,
     }
 
 
@@ -287,6 +345,7 @@ WHAT YOU KNOW:
 - Each player's current Normalized CFB Index.
 - The currently announced field from the database.
 - The upcoming match date/location/tee times.
+- Your own previous market prices and stated reasons for this upcoming match, if any.
 
 HOW TO THINK:
 - Higher Normalized CFB Index represents stronger current competitive strength.
@@ -309,6 +368,10 @@ HOW TO THINK:
 - Use standard American odds notation, including an explicit + sign on positive
   odds.
 - Do NOT assume or infer any player's gender. Use the player's name or gender-neutral language.
+- Previous market prices are your own prior decisions. Treat them as memory, not as
+  authoritative truth. You may keep them, move them, or substantially reprice a
+  player if your current judgment supports doing so.
+- Do not change a price merely for the sake of changing it.
 
 OUTPUT:
 
@@ -357,6 +420,104 @@ async def generate_odds(bookie_data):
     return json.loads(response.output_text)
 
 
+# Calculate the bettor's profit if a wager wins.
+# This excludes return of the original stake.
+def calculate_wager_profit(wager_amount, odds):
+    if odds > 0:
+        return wager_amount * odds / 100
+
+    return wager_amount * 100 / abs(odds)
+
+
+# Read all currently unsettled wagers for the upcoming match.
+#
+# The bookmaker can see bets placed against its market, but does not receive
+# the gambler's private reasoning stored in wagers.reason.
+def get_current_wagers(match_id):
+    connection = get_db_connection()
+    cursor = connection.cursor(dictionary=True)
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                w.wager_id,
+                w.market_price_id,
+                w.gambler_id,
+                w.wager_amount,
+                w.wagered_at,
+                mp.player_id,
+                p.player_name,
+                mp.odds_american
+            FROM wagers w
+            INNER JOIN market_prices mp
+                ON mp.market_price_id = w.market_price_id
+            INNER JOIN players p
+                ON p.id = mp.player_id
+            WHERE mp.match_id = %s
+              AND w.outcome IS NULL
+            ORDER BY
+                w.wagered_at,
+                w.wager_id
+            """,
+            (match_id,),
+        )
+
+        return cursor.fetchall()
+
+    finally:
+        cursor.close()
+        connection.close()
+
+
+# Summarize the sportsbook's outstanding exposure by player.
+def build_wager_exposure(current_wagers):
+    exposure = {}
+
+    for wager in current_wagers:
+        player_id = wager["player_id"]
+
+        if player_id not in exposure:
+            exposure[player_id] = {
+                "player_id": player_id,
+                "player": wager["player_name"],
+                "wager_count": 0,
+                "total_staked": 0.0,
+                "potential_profit_liability": 0.0,
+                "potential_total_return": 0.0,
+                "wagers": [],
+            }
+
+        wager_amount = float(wager["wager_amount"])
+        odds = wager["odds_american"]
+
+        profit = calculate_wager_profit(
+            wager_amount,
+            odds,
+        )
+
+        total_return = wager_amount + profit
+
+        exposure[player_id]["wager_count"] += 1
+        exposure[player_id]["total_staked"] += wager_amount
+        exposure[player_id]["potential_profit_liability"] += profit
+        exposure[player_id]["potential_total_return"] += total_return
+
+        exposure[player_id]["wagers"].append(
+            {
+                "wager_id": wager["wager_id"],
+                "market_price_id": wager["market_price_id"],
+                "gambler_id": wager["gambler_id"],
+                "odds_american": odds,
+                "wager_amount": wager_amount,
+                "potential_profit": profit,
+                "wagered_at": str(wager["wagered_at"]),
+            }
+        )
+
+    return list(exposure.values())
+
+
 async def main():
     print("=" * 72)
     print("CFB BOOKIE TEST")
@@ -400,6 +561,13 @@ async def main():
             f"matches={player['matches_played']}"
         )
 
+    previous_prices = bookie_data["previous_market_prices"]
+
+    print(
+        f"\nPrevious market prices for this match: "
+        f"{len(previous_prices)}"
+    )
+    
     print(f"\n[4/4] Asking {MODEL} to price the field...\n")
 
     market = await generate_odds(bookie_data)
