@@ -21,6 +21,7 @@ import sheets
 
 
 MODEL = os.getenv("BOOKIE_MODEL", "gpt-5.6-sol")
+WRITE_MARKET = os.getenv("BOOKIE_WRITE_MARKET", "false").lower() == "true"
 
 MYSQL_HOST = os.getenv("MYSQL_HOST")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
@@ -42,6 +43,86 @@ def get_db_connection():
         password=MYSQL_PASSWORD,
     )
 
+
+# Convert American odds to implied probability as a decimal.
+def american_to_implied_probability(odds):
+    if odds > 0:
+        return 100 / (odds + 100)
+
+    return abs(odds) / (abs(odds) + 100)
+
+
+# Calculate the sportsbook's total implied probability across the field.
+def calculate_book_percentage(prices):
+    return sum(
+        american_to_implied_probability(price["odds_american"])
+        for price in prices
+    ) * 100
+
+
+# Make sure the model returned exactly one valid price for every IN player.
+def validate_market(market, field):
+    if "prices" not in market or not isinstance(market["prices"], list):
+        raise ValueError("Model response does not contain a valid prices list.")
+
+    expected_ids = {player["player_id"] for player in field}
+    returned_ids = [price.get("player_id") for price in market["prices"]]
+
+    if len(returned_ids) != len(set(returned_ids)):
+        raise ValueError("Model returned duplicate player IDs.")
+
+    if set(returned_ids) != expected_ids:
+        raise ValueError(
+            "Returned market does not exactly match the current IN field."
+        )
+
+    for price in market["prices"]:
+        odds = price.get("odds_american")
+
+        if not isinstance(odds, int):
+            raise ValueError(
+                f"Invalid odds for player_id {price.get('player_id')}: "
+                "American odds must be integers."
+            )
+
+        if -100 < odds < 100:
+            raise ValueError(
+                f"Invalid odds for player_id {price.get('player_id')}: "
+                "American odds must be +100 or greater, or -100 or less."
+            )
+
+
+# Save one complete market snapshot to market_prices.
+def save_market_prices(match_id, prices):
+    connection = get_db_connection()
+    cursor = connection.cursor()
+
+    try:
+        cursor.executemany(
+            """
+            INSERT INTO market_prices (
+                match_id,
+                player_id,
+                odds_american
+            )
+            VALUES (%s, %s, %s)
+            """,
+            [
+                (
+                    match_id,
+                    price["player_id"],
+                    price["odds_american"],
+                )
+                for price in prices
+            ],
+        )
+
+        connection.commit()
+
+    finally:
+        cursor.close()
+        connection.close()
+                    
 
 # Return the next active match that has not finished yet.
 # This intentionally mirrors the upcoming-match logic already used by the bot:
@@ -230,16 +311,33 @@ HOW TO THINK:
 - Do NOT assume or infer any player's gender. Use the player's name or gender-neutral language.
 
 OUTPUT:
-First print one short sentence identifying the upcoming match.
 
-Then print one line per player, ordered from shortest odds / favorite to longest:
+Return valid JSON only.
 
-PLAYER | ODDS | IMPLIED % | SHORT REASON
+Use exactly this structure:
 
-Keep each reason concise and tied directly to the supplied data.
+{{
+  "match_summary": "short sentence identifying the upcoming match",
+  "prices": [
+    {{
+      "player_id": 123,
+      "player": "Player Name",
+      "odds_american": 150,
+      "reason": "Short reason tied directly to the supplied data."
+    }}
+  ]
+}}
 
-End with:
-BOOK PERCENTAGE: XX.X%
+RULES FOR THE JSON:
+- Return exactly one price for every player currently IN.
+- Use each supplied player_id exactly as provided.
+- odds_american must be an integer.
+- Positive American odds should be represented as positive integers, such as 150.
+- Negative American odds should be represented as negative integers, such as -120.
+- Do not include implied probability; Python will calculate it.
+- Do not calculate or return book percentage; Python will calculate it.
+- Do not include markdown code fences.
+- Do not include commentary before or after the JSON.
 
 DATA:
 {json.dumps(bookie_data, indent=2, default=str)}
@@ -256,7 +354,7 @@ async def generate_odds(bookie_data):
         input=prompt,
     )
 
-    return response.output_text
+    return json.loads(response.output_text)
 
 
 async def main():
@@ -304,14 +402,59 @@ async def main():
 
     print(f"\n[4/4] Asking {MODEL} to price the field...\n")
 
-    odds = await generate_odds(bookie_data)
+    market = await generate_odds(bookie_data)
+
+    validate_market(market, field)
+
+    book_percentage = calculate_book_percentage(market["prices"])
 
     print("=" * 72)
     print("TAN CITY SPORTSBOOK — TEST MARKET")
     print("=" * 72)
-    print(odds)
-    print("=" * 72)
 
+    print(market["match_summary"])
+    print()
 
+    sorted_prices = sorted(
+        market["prices"],
+        key=lambda price: american_to_implied_probability(
+            price["odds_american"]
+        ),
+        reverse=True,
+    )
+
+    for price in sorted_prices:
+        implied = (
+            american_to_implied_probability(price["odds_american"])
+            * 100
+        )
+
+        odds_text = (
+            f"+{price['odds_american']}"
+            if price["odds_american"] > 0
+            else str(price["odds_american"])
+        )
+
+        print(
+            f"{price['player']} | "
+            f"{odds_text} | "
+            f"{implied:.1f}% | "
+            f"{price['reason']}"
+        )
+
+    print()
+    print(f"BOOK PERCENTAGE: {book_percentage:.1f}%")
+
+    if WRITE_MARKET:
+        save_market_prices(
+            match["id"],
+            market["prices"],
+        )
+        print("\nMarket snapshot written to market_prices.")
+    else:
+        print("\nMarket snapshot NOT written. BOOKIE_WRITE_MARKET=false.")
+        
+    print("=" * 72)        
+    
 if __name__ == "__main__":
     asyncio.run(main())
