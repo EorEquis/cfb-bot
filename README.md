@@ -260,7 +260,7 @@ This separation has already allowed an 89-wager stress settlement to reconcile *
 Administrative commands are authorized through:
 
 1. A permanent bootstrap administrator configured in `.env`
-2. Membership in the Discord `Admins` role
+2. Membership in a specific Discord role
 
 This means administrative authority can be delegated without editing the database.
 
