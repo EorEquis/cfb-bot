@@ -20,6 +20,7 @@ import sys
 from app_log import DatabaseLogHandler
 from commands import register_commands
 from discord import app_commands
+from scheduler import tan_city_scheduler
 
 
 # Create a standard Python logger for this module.
@@ -111,6 +112,10 @@ class CFBBot(discord.Client):
 
         # Register/sync the current commands specifically to the CFB guild.
         synced = await self.tree.sync(guild=DEV_GUILD)
+        
+        # Start scheduled background jobs once during bot startup.
+        if not tan_city_scheduler.is_running():
+            tan_city_scheduler.start()        
 
         print("SYNCED COMMANDS:", [cmd.name for cmd in synced])
 
