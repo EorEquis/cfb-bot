@@ -1070,7 +1070,7 @@ def register_commands(
             match = cursor.fetchone()
 
             if match is None:
-                return None, [], {}
+                return None, [], {}, None
 
             match_id = match[0]
 
@@ -1098,33 +1098,109 @@ def register_commands(
             player_availability = cursor.fetchall()
             player_names = [row[0] for row in player_availability]
 
-            if not player_names:
-                return match, [], {}
+            player_notes = {}
 
+            if player_names:
+                cursor.execute(
+                    """
+                    SELECT
+                        player_name,
+                        notes
+                    FROM players
+                    WHERE active = TRUE
+                    AND player_name IN ({})
+                    AND notes IS NOT NULL
+                    AND TRIM(notes) <> ''
+                    """.format(
+                        ",".join(["%s"] * len(player_names))
+                    ),
+                    tuple(player_names)
+                )
+
+                player_notes = {
+                    player_name: notes
+                    for player_name, notes in cursor.fetchall()
+                }
+
+            # Load David's Tan City bankroll and any unsettled wagers on this match.
             cursor.execute(
                 """
                 SELECT
-                    player_name,
-                    notes
-                FROM players
-                WHERE active = TRUE
-                AND player_name IN ({})
-                AND notes IS NOT NULL
-                AND TRIM(notes) <> ''
-                """.format(
-                    ",".join(["%s"] * len(player_names))
-                ),
-                tuple(player_names)
+                    gambler_id,
+                    starting_balance,
+                    current_balance
+                FROM gamblers
+                WHERE is_david = TRUE
+                LIMIT 1
+                """
             )
 
-            player_notes = {
-                player_name: notes
-                for player_name, notes in cursor.fetchall()
-            }
+            david = cursor.fetchone()
+            david_gambling = None
 
-            return match, player_availability, player_notes
+            if david is not None:
+                david_gambler_id, starting_balance, current_balance = david
 
-        match, player_availability, player_notes = await asyncio.to_thread(
+                cursor.execute(
+                    """
+                    SELECT
+                        p.player_name,
+                        mp.odds_american,
+                        w.wager_amount
+                    FROM wagers w
+                    JOIN market_prices mp
+                        ON mp.market_price_id = w.market_price_id
+                    JOIN players p
+                        ON p.id = mp.player_id
+                    WHERE w.gambler_id = %s
+                    AND mp.match_id = %s
+                    AND w.outcome IS NULL
+                    ORDER BY
+                        w.wagered_at,
+                        w.wager_id
+                    """,
+                    (
+                        david_gambler_id,
+                        match_id
+                    )
+                )
+
+                david_wagers = [
+                    {
+                        "Player": player_name,
+                        "Odds": odds_american,
+                        "Wager Amount": float(wager_amount)
+                    }
+                    for player_name, odds_american, wager_amount
+                    in cursor.fetchall()
+                ]
+
+                # Only expose gambling context to the preview when David actually
+                # has action on the upcoming match.
+                if david_wagers:
+                    david_gambling = {
+                        "Starting Bankroll": float(starting_balance),
+                        "Current Bankroll": float(current_balance),
+                        "Total Wagered On Match": sum(
+                            wager["Wager Amount"]
+                            for wager in david_wagers
+                        ),
+                        "Wagers": david_wagers
+                    }
+
+            return (
+                match,
+                player_availability,
+                player_notes,
+                david_gambling
+            )
+
+        (
+            match,
+            player_availability,
+            player_notes,
+            david_gambling
+        ) = await asyncio.to_thread(
             database_operation,
             load_preview_context
         )
@@ -1185,7 +1261,10 @@ def register_commands(
             preview_data["Player Notes"] = player_notes
 
             if special_rule:
-                preview_data["Weekly Special Rule"] = special_rule            
+                preview_data["Weekly Special Rule"] = special_rule
+
+            if david_gambling is not None:
+                preview_data["David Gambling"] = david_gambling
 
             await asyncio.to_thread(
                 mark_bot_usage_api_call,
