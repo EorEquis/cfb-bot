@@ -1070,7 +1070,7 @@ def register_commands(
             match = cursor.fetchone()
 
             if match is None:
-                return None, [], {}
+                return None, [], {}, None
 
             match_id = match[0]
 
@@ -1098,33 +1098,109 @@ def register_commands(
             player_availability = cursor.fetchall()
             player_names = [row[0] for row in player_availability]
 
-            if not player_names:
-                return match, [], {}
+            player_notes = {}
 
+            if player_names:
+                cursor.execute(
+                    """
+                    SELECT
+                        player_name,
+                        notes
+                    FROM players
+                    WHERE active = TRUE
+                    AND player_name IN ({})
+                    AND notes IS NOT NULL
+                    AND TRIM(notes) <> ''
+                    """.format(
+                        ",".join(["%s"] * len(player_names))
+                    ),
+                    tuple(player_names)
+                )
+
+                player_notes = {
+                    player_name: notes
+                    for player_name, notes in cursor.fetchall()
+                }
+
+            # Load David's Tan City bankroll and any unsettled wagers on this match.
             cursor.execute(
                 """
                 SELECT
-                    player_name,
-                    notes
-                FROM players
-                WHERE active = TRUE
-                AND player_name IN ({})
-                AND notes IS NOT NULL
-                AND TRIM(notes) <> ''
-                """.format(
-                    ",".join(["%s"] * len(player_names))
-                ),
-                tuple(player_names)
+                    gambler_id,
+                    starting_balance,
+                    current_balance
+                FROM gamblers
+                WHERE is_david = TRUE
+                LIMIT 1
+                """
             )
 
-            player_notes = {
-                player_name: notes
-                for player_name, notes in cursor.fetchall()
-            }
+            david = cursor.fetchone()
+            david_gambling = None
 
-            return match, player_availability, player_notes
+            if david is not None:
+                david_gambler_id, starting_balance, current_balance = david
 
-        match, player_availability, player_notes = await asyncio.to_thread(
+                cursor.execute(
+                    """
+                    SELECT
+                        p.player_name,
+                        mp.odds_american,
+                        w.wager_amount
+                    FROM wagers w
+                    JOIN market_prices mp
+                        ON mp.market_price_id = w.market_price_id
+                    JOIN players p
+                        ON p.id = mp.player_id
+                    WHERE w.gambler_id = %s
+                    AND mp.match_id = %s
+                    AND w.outcome IS NULL
+                    ORDER BY
+                        w.wagered_at,
+                        w.wager_id
+                    """,
+                    (
+                        david_gambler_id,
+                        match_id
+                    )
+                )
+
+                david_wagers = [
+                    {
+                        "Player": player_name,
+                        "Odds": odds_american,
+                        "Wager Amount": float(wager_amount)
+                    }
+                    for player_name, odds_american, wager_amount
+                    in cursor.fetchall()
+                ]
+
+                # Only expose gambling context to the preview when David actually
+                # has action on the upcoming match.
+                if david_wagers:
+                    david_gambling = {
+                        "Starting Bankroll": float(starting_balance),
+                        "Current Bankroll": float(current_balance),
+                        "Total Wagered On Match": sum(
+                            wager["Wager Amount"]
+                            for wager in david_wagers
+                        ),
+                        "Wagers": david_wagers
+                    }
+
+            return (
+                match,
+                player_availability,
+                player_notes,
+                david_gambling
+            )
+
+        (
+            match,
+            player_availability,
+            player_notes,
+            david_gambling
+        ) = await asyncio.to_thread(
             database_operation,
             load_preview_context
         )
@@ -1185,7 +1261,10 @@ def register_commands(
             preview_data["Player Notes"] = player_notes
 
             if special_rule:
-                preview_data["Weekly Special Rule"] = special_rule            
+                preview_data["Weekly Special Rule"] = special_rule
+
+            if david_gambling is not None:
+                preview_data["David Gambling"] = david_gambling
 
             await asyncio.to_thread(
                 mark_bot_usage_api_call,
@@ -1545,6 +1624,7 @@ def register_commands(
 
 
     # Generate an AI-assisted recap of the latest match and record API token usage.
+    # Generate an AI-assisted recap of the latest match and record API token usage.
     @bot.tree.command(
         name="wrapup",
         description="Get the latest CFB Sports Network match recap",
@@ -1582,7 +1662,9 @@ def register_commands(
                 get_latest_match_with_history
             )
 
-            def load_player_notes(cursor):
+            # Load player notes and David's settled Tan City wagers for the
+            # completed match being wrapped up.
+            def load_wrapup_context(cursor):
                 cursor.execute(
                     """
                     SELECT
@@ -1595,17 +1677,132 @@ def register_commands(
                     """
                 )
 
-                return {
+                player_notes = {
                     player_name: notes
                     for player_name, notes in cursor.fetchall()
                 }
 
-            player_notes = await asyncio.to_thread(
+                # Match the authoritative spreadsheet result to the bot-created
+                # database match by date.
+                cursor.execute(
+                    """
+                    SELECT id
+                    FROM matches
+                    WHERE match_date = %s
+                    AND active = TRUE
+                    LIMIT 1
+                    """,
+                    (match_data["Match Date"],)
+                )
+
+                db_match = cursor.fetchone()
+
+                if db_match is None:
+                    return player_notes, None
+
+                match_id = db_match[0]
+
+                cursor.execute(
+                    """
+                    SELECT
+                        gambler_id,
+                        current_balance
+                    FROM gamblers
+                    WHERE is_david = TRUE
+                    LIMIT 1
+                    """
+                )
+
+                david = cursor.fetchone()
+
+                if david is None:
+                    return player_notes, None
+
+                david_gambler_id, current_balance = david
+
+                # Only David's own settled wagers are exposed to the wrapup.
+                # Private wager reasons are deliberately excluded.
+                cursor.execute(
+                    """
+                    SELECT
+                        p.player_name,
+                        mp.odds_american,
+                        w.wager_amount,
+                        w.outcome,
+                        w.payout
+                    FROM wagers w
+                    JOIN market_prices mp
+                        ON mp.market_price_id = w.market_price_id
+                    JOIN players p
+                        ON p.id = mp.player_id
+                    WHERE w.gambler_id = %s
+                    AND mp.match_id = %s
+                    AND w.outcome IS NOT NULL
+                    ORDER BY
+                        w.wagered_at,
+                        w.wager_id
+                    """,
+                    (
+                        david_gambler_id,
+                        match_id
+                    )
+                )
+
+                wager_rows = cursor.fetchall()
+
+                if not wager_rows:
+                    return player_notes, None
+
+                david_wagers = [
+                    {
+                        "Player": player_name,
+                        "Odds": odds_american,
+                        "Wager Amount": float(wager_amount),
+                        "Outcome": outcome,
+                        "Payout": float(payout or 0)
+                    }
+                    for (
+                        player_name,
+                        odds_american,
+                        wager_amount,
+                        outcome,
+                        payout
+                    ) in wager_rows
+                ]
+
+                david_gambling = {
+                    "Current Bankroll": float(current_balance),
+                    "Total Wagered": round(
+                        sum(
+                            wager["Wager Amount"]
+                            for wager in david_wagers
+                        ),
+                        2
+                    ),
+                    "Total Payout": round(
+                        sum(
+                            wager["Payout"]
+                            for wager in david_wagers
+                        ),
+                        2
+                    ),
+                    "Wagers": david_wagers
+                }
+
+                return player_notes, david_gambling
+
+            (
+                player_notes,
+                david_gambling
+            ) = await asyncio.to_thread(
                 database_operation,
-                load_player_notes
+                load_wrapup_context
             )
 
-            match_data["Player Notes"] = player_notes            
+            match_data["Player Notes"] = player_notes
+
+            if david_gambling is not None:
+                match_data["David Gambling"] = david_gambling
 
             await asyncio.to_thread(
                 mark_bot_usage_api_call,
@@ -1625,13 +1822,10 @@ def register_commands(
 
             chunks = split_discord_message(recap)
 
-            # Replace the "reviewing the tape" message
-            # with the first chunk
             await interaction.edit_original_response(
                 content=chunks[0]
             )
 
-            # Send any remaining chunks as follow-up messages
             for chunk in chunks[1:]:
                 await interaction.followup.send(chunk)
 
@@ -1639,6 +1833,6 @@ def register_commands(
             logger.error(f"WRAPUP ERROR: {e}")
 
             await interaction.followup.send(
-                "CFB Sports Network has suffered "
+                "CFB Sports Network's postgame desk has suffered "
                 "a catastrophic production failure."
             )
