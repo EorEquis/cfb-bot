@@ -549,6 +549,15 @@ async def main():
     print("\n[3/4] Reading completed history and normalized indexes from Google Sheets...")
     bookie_data = build_bookie_data(match, field)
 
+    print("\nCURRENT WAGER EXPOSURE:")
+    print(
+        json.dumps(
+            bookie_data["current_wager_exposure"],
+            indent=2,
+            default=str,
+        )
+    )    
+
     for player in bookie_data["field"]:
         index_text = (
             f"{player['normalized_cfb_index']:.2f}"

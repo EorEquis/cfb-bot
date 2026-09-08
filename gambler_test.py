@@ -20,10 +20,10 @@ from openai import AsyncOpenAI
 import sheets
 
 
+CONCURRENT_GAMBLERS = int(os.getenv("CONCURRENT_GAMBLERS", "10"))
 MODEL = os.getenv("GAMBLER_MODEL", "gpt-5.6-sol")
+NUMBER_GAMBLERS = int(os.getenv("NUMBER_GAMBLERS", "10"))
 WRITE_WAGER = os.getenv("GAMBLER_WRITE_WAGER", "false").lower() == "true"
-
-TEST_GAMBLER_ID = 7
 
 MYSQL_HOST = os.getenv("MYSQL_HOST")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
@@ -46,8 +46,7 @@ def get_db_connection():
     )
 
 
-# Read one gambler's persistent personality and bankroll state.
-def get_gambler(gambler_id):
+def get_active_gamblers():
     connection = get_db_connection()
     cursor = connection.cursor(dictionary=True)
 
@@ -65,12 +64,14 @@ def get_gambler(gambler_id):
                 starting_balance,
                 current_balance
             FROM gamblers
-            WHERE gambler_id = %s
+            WHERE current_balance > 0
+            ORDER BY gambler_id
+            LIMIT %s
             """,
-            (gambler_id,),
+            (NUMBER_GAMBLERS,),
         )
 
-        return cursor.fetchone()
+        return cursor.fetchall()
 
     finally:
         cursor.close()
@@ -611,134 +612,134 @@ def save_wager(gambler_id, decision):
         cursor.close()
         connection.close()
 
+
+async def run_gambler(gambler, match, current_market, semaphore):
+    async with semaphore:
+        gambler_data = build_gambler_data(
+            gambler,
+            match,
+            current_market,
+        )
+
+        decision = await generate_decision(gambler_data)
+
+        validate_decision(
+            decision,
+            gambler_data,
+        )
+
+        result = {
+            "gambler": gambler,
+            "decision": decision,
+            "new_balance": None,
+        }
+
+        if decision["bet"] and WRITE_WAGER:
+            result["new_balance"] = save_wager(
+                gambler["gambler_id"],
+                decision,
+            )
+
+        return result
+    
+
 async def main():
-    print("=" * 72)
-    print("CFB GAMBLER TEST")
-    print("=" * 72)
-
-    print(f"\n[1/5] Reading gambler {TEST_GAMBLER_ID} from database...")
-
-    gambler = get_gambler(TEST_GAMBLER_ID)
-
-    if gambler is None:
-        print(f"Gambler {TEST_GAMBLER_ID} not found.")
-        return
-
-    print(
-        f"Gambler {gambler['gambler_id']}: "
-        f"bankroll=${float(gambler['current_balance']):,.2f}"
-    )
-
-    print(
-        f"  risk={gambler['risk_tolerance']} "
-        f"loss_aversion={gambler['loss_aversion']} "
-        f"contrarianism={gambler['contrarianism']} "
-        f"confidence={gambler['confidence']} "
-        f"discipline={gambler['bankroll_discipline']}"
-    )
-
-    print("\n[2/5] Reading upcoming match from database...")
-
     match = get_upcoming_match()
 
     if match is None:
         print("No upcoming active match found.")
         return
 
-    print(
-        f"Found match {match['id']}: "
-        f"{match['match_date']} — {match['location']}"
-    )
-
-    print("\n[3/5] Reading current Tan City market...")
-
     current_market = get_current_market(match["id"])
 
     if not current_market:
-        print("No current market prices found for this match.")
+        print("No current market found for upcoming match.")
         return
 
-    print(f"{len(current_market)} current market price(s):")
+    gamblers = get_active_gamblers()
 
-    for row in current_market:
-        odds_text = (
-            f"+{row['odds_american']}"
-            if row["odds_american"] > 0
-            else str(row["odds_american"])
-        )
+    if not gamblers:
+        print("No active gamblers found.")
+        return
 
-        print(
-            f"  - {row['player_name']}: "
-            f"{odds_text} "
-            f"(market_price_id={row['market_price_id']})"
-        )
-
-    print("\n[4/5] Reading CFB history and gambler wager history...")
-
-    gambler_data = build_gambler_data(
-        gambler,
-        match,
-        current_market,
+    print(
+        f"\nRunning {len(gamblers)} gamblers for "
+        f"match {match['id']} on {match['match_date']}"
     )
 
     print(
-        f"Previous wagers: "
-        f"{len(gambler_data['wager_history'])}"
+        f"Maximum concurrent gamblers: "
+        f"{CONCURRENT_GAMBLERS}"
     )
 
-    print(f"\n[5/5] Asking {MODEL} for a wagering decision...\n")
+    semaphore = asyncio.Semaphore(CONCURRENT_GAMBLERS)
 
-    decision = await generate_decision(gambler_data)
-
-    validate_decision(decision, gambler_data)
-
-    print("=" * 72)
-    print("TAN CITY GAMBLER — TEST DECISION")
-    print("=" * 72)
-
-    if decision["bet"]:
-        selected_market = next(
-            row
-            for row in gambler_data["current_market"]
-            if row["market_price_id"] == decision["market_price_id"]
+    tasks = [
+        run_gambler(
+            gambler,
+            match,
+            current_market,
+            semaphore,
         )
+        for gambler in gamblers
+    ]
 
-        odds = selected_market["odds_american"]
+    results = await asyncio.gather(*tasks)
 
-        odds_text = (
-            f"+{odds}"
-            if odds > 0
-            else str(odds)
+    for result in results:
+        gambler = result["gambler"]
+        decision = result["decision"]
+
+        print("\n" + "=" * 70)
+
+        print(
+            f"Gambler {gambler['gambler_id']}: "
+            f"bankroll=${float(gambler['current_balance']):,.2f}"
         )
 
         print(
-            f"BET ${float(decision['wager_amount']):,.2f} "
-            f"on {decision['player']} at {odds_text}"
+            f"risk={gambler['risk_tolerance']} "
+            f"loss_aversion={gambler['loss_aversion']} "
+            f"contrarianism={gambler['contrarianism']} "
+            f"confidence={gambler['confidence']} "
+            f"discipline={gambler['bankroll_discipline']}"
         )
 
-        print(f"REASON: {decision['reason']}")
-
-        if WRITE_WAGER:
-            save_wager(
-                gambler["gambler_id"],
-                decision,
+        if decision["bet"]:
+            market = next(
+                row
+                for row in current_market
+                if row["market_price_id"]
+                == decision["market_price_id"]
             )
 
-            print("\nWager written to wagers.")
+            odds = market["odds_american"]
+            odds_text = (
+                f"+{odds}"
+                if odds > 0
+                else str(odds)
+            )
+
+            print(
+                f"\nBET ${decision['wager_amount']:,.2f} "
+                f"on {decision['player']} at {odds_text}"
+            )
+
+            print(f"REASON: {decision['reason']}")
+
+            if WRITE_WAGER:
+                print("Wager written to wagers.")
+                print(
+                    f"Remaining bankroll: "
+                    f"${result['new_balance']:,.2f}"
+                )
 
         else:
-            print(
-                "\nWager NOT written. "
-                "GAMBLER_WRITE_WAGER=false."
-            )
+            print("\nPASS")
+            print(f"REASON: {decision['reason']}")
 
-    else:
-        print("PASS")
-        print(f"REASON: {decision['reason']}")
-        print("\nNo wager written.")
-
-    print("=" * 72)
-
+    print("\n" + "=" * 70)
+    print("Gambler run complete.")    
 
 if __name__ == "__main__":
     asyncio.run(main())
