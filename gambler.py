@@ -14,6 +14,7 @@ load_dotenv()
 
 import asyncio
 import json
+import logging
 import os
 
 import mysql.connector
@@ -21,6 +22,8 @@ from openai import AsyncOpenAI
 
 import sheets
 
+
+logger = logging.getLogger(__name__)
 
 CONCURRENT_GAMBLERS = int(os.getenv("CONCURRENT_GAMBLERS", "10"))
 MODEL = os.getenv("GAMBLER_MODEL", "gpt-5.6-sol")
@@ -548,6 +551,11 @@ async def run_gamblers():
     if not gamblers:
         return []
 
+    logger.info(
+        "Tan City gamblers starting | Gamblers: %s",
+        len(gamblers),
+    )
+
     semaphore = asyncio.Semaphore(CONCURRENT_GAMBLERS)
 
     tasks = [
@@ -560,7 +568,26 @@ async def run_gamblers():
         for gambler in gamblers
     ]
 
-    return await asyncio.gather(*tasks)
+    results = await asyncio.gather(
+        *tasks,
+        return_exceptions=True,
+    )
+
+    successful_results = []
+
+    for gambler, result in zip(gamblers, results):
+        if isinstance(result, Exception):
+            logger.error(
+                "Tan City gambler %s failed | %s: %s",
+                gambler["gambler_id"],
+                type(result).__name__,
+                result,
+            )
+            continue
+
+        successful_results.append(result)
+
+    return successful_results
 
 
 # Store one validated wager and immediately reserve/deduct the stake

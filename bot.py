@@ -81,6 +81,11 @@ logging.getLogger().addHandler(db_log_handler)
 logging.getLogger().setLevel(LOG_LEVEL)
 
 
+# Suppress routine HTTP success messages unless DEBUG logging was requested.
+if LOG_LEVEL != logging.DEBUG:
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
 # Discord intents determine which categories of Discord events the bot receives.
 # Start with Discord's default set and explicitly enable member information.
 intents = discord.Intents.default()

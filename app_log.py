@@ -109,10 +109,12 @@ class DatabaseLogHandler(logging.Handler):
         
     def emit(self, record):
         try:
+            message = self.format(record)
+
             self.log_queue.put(
                 (
                     record.levelname,
-                    record.getMessage(),
+                    message,
                     record.name
                 )
             )
