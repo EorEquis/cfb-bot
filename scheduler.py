@@ -59,7 +59,7 @@ async def run_betting_cycle():
         passes = len(results) - bets
 
         logger.info(
-            "Tan City gamblers complete | Gamblers: %s | Bets: %s | Passes: %s",
+            "Tan City gamblers complete | Decisions: %s | Bets: %s | Passes: %s",
             len(results),
             bets,
             passes,
