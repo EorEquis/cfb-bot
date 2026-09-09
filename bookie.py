@@ -42,7 +42,7 @@ def american_to_implied_probability(odds):
 
 
 # Combine database field information with spreadsheet history/current indexes.
-def build_bookie_data(match, field):
+def build_bookie_data(match, field, player_context):
     completed_matches = sheets.get_completed_matches()
     current_players = sheets.get_players()
     previous_market_prices = get_previous_market_prices(match["id"])
@@ -51,7 +51,7 @@ def build_bookie_data(match, field):
 
     player_data = []
 
-    for db_player in field:
+    for db_player in player_context:
         name = db_player["player_name"]
 
         history = completed_matches[
@@ -116,7 +116,7 @@ def build_bookie_data(match, field):
                 if value is not None
             ],
         },
-        "field": player_data,
+        "player_context": player_data,
         "previous_market_prices": [
             {
                 "market_price_id": row["market_price_id"],
@@ -143,9 +143,13 @@ currently marked IN for the upcoming match.
 Use ONLY the supplied data.
 
 WHAT YOU KNOW:
-- Completed CFB match history for each player.
-- Each player's current Normalized CFB Index.
-- The currently announced field from the database.
+- Completed CFB match history for each active player.
+- Each active player's current Normalized CFB Index.
+- Each active player's current availability status.
+- IN means the player currently expects to participate and is in the betting field.
+- UNKNOWN means it is not currently known whether the player will participate.
+- OUT means the player has indicated they do not currently expect to participate,
+  but availability can change because real people and real schedules are involved.
 - The upcoming match date/location/tee times.
 - Your own previous market prices and stated reasons for this upcoming match, if any.
 
@@ -163,8 +167,11 @@ HOW TO THINK:
 - Do NOT use handicap benefit credits or provisional offsets in this test.
 - Do NOT invent injuries, course history, weather, player tendencies, or any
   information not supplied here.
-- Price the players relative to the CURRENT FIELD, not relative to players who
-  are not entered.
+- Set prices only for players marked IN. UNKNOWN and OUT players are not currently
+  in the betting field, but their supplied history, strength, and availability
+  are legitimate context when assessing the upcoming match.
+- Do not assign a probability that an UNKNOWN or OUT player will ultimately
+  participate unless such a probability is explicitly supplied.
 - Produce realistic bookmaker odds with a modest house margin rather than fair
   probabilities that sum to exactly 100%.
 - Use standard American odds notation, including an explicit + sign on positive
@@ -288,8 +295,41 @@ async def generate_odds(bookie_data):
     return json.loads(response.output_text)
 
 
+# Read all active players and their current availability context.
+# MAYBE and no response are both exposed to the agent as UNKNOWN.
+def get_player_context(match_id):
+    connection = get_db_connection()
+    cursor = connection.cursor(dictionary=True)
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                p.id AS player_id,
+                p.player_name,
+                CASE
+                    WHEN a.status = 'in' THEN 'in'
+                    WHEN a.status = 'out' THEN 'out'
+                    ELSE 'unknown'
+                END AS status
+            FROM players p
+            LEFT JOIN availability a
+                ON a.player_id = p.id
+                AND a.match_id = %s
+            WHERE p.active = TRUE
+            ORDER BY p.player_name
+            """,
+            (match_id,),
+        )
+
+        return cursor.fetchall()
+
+    finally:
+        cursor.close()
+        connection.close()
+
+
 # Read the Players and Availability tables and return players currently IN.
-# MAYBE/OUT players are intentionally excluded from the market.
 def get_current_field(match_id):
     connection = get_db_connection()
     cursor = connection.cursor(dictionary=True)
@@ -474,9 +514,12 @@ async def run_bookie():
     if not field:
         return None
 
+    player_context = get_player_context(match["id"])
+
     bookie_data = build_bookie_data(
         match,
         field,
+        player_context,
     )
 
     market = await generate_odds(bookie_data)

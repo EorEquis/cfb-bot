@@ -39,8 +39,8 @@ client = AsyncOpenAI()
 
 
 # Combine everything the gambler is allowed to know into one data structure.
-def build_gambler_data(gambler, match, current_market):
-    player_data = get_player_data(current_market)
+def build_gambler_data(gambler, match, current_market, player_context):
+    player_data = get_player_data(player_context)
     wager_history = get_wager_history(gambler["gambler_id"])
 
     tee_times = [
@@ -162,8 +162,12 @@ WHAT YOU KNOW:
 - Your current bankroll.
 - Your own personality traits.
 - The current Tan City market prices.
-- Current Normalized CFB Index for players in the market.
-- Completed CFB match history for those players.
+- Current Normalized CFB Index and completed CFB match history for all active players.
+- Each active player's current availability status.
+- IN means the player currently expects to participate and is in the betting market.
+- UNKNOWN means it is not currently known whether the player will participate.
+- OUT means the player has indicated they do not currently expect to participate,
+  but availability can change because real people and real schedules are involved.
 - Your own prior wagers, reasons, and any known outcomes.
 - You do NOT have access to the bookmaker's private reasoning.
 - You must independently decide whether you believe a price is good or bad.
@@ -175,8 +179,11 @@ HOW TO THINK:
 - Higher Normalized CFB Index represents stronger current competitive strength.
 - Historical Match Performance, points, group wins, match wins, and recent form
   are evidence about a player's ability to win.
-- Compare your own assessment of a player's chance to the price offered by the
-  sportsbook.
+- You may consider the supplied history, strength, and availability of UNKNOWN
+  and OUT players when assessing the upcoming match.
+- Only players in the current Tan City market can be wagered on.
+- Do not assign a probability that an UNKNOWN or OUT player will ultimately
+  participate unless such a probability is explicitly supplied.
 - The historical sample may be absurdly small. This has never stopped CFB from
   drawing sweeping conclusions, and it should not stop you. Use the available
   evidence seriously without apologizing for the sample size.
@@ -270,6 +277,40 @@ def get_active_gamblers():
         connection.close()
 
 
+# Read all active players and their current availability context.
+# MAYBE and no response are both exposed to the agent as UNKNOWN.
+def get_player_context(match_id):
+    connection = get_db_connection()
+    cursor = connection.cursor(dictionary=True)
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                p.id AS player_id,
+                p.player_name,
+                CASE
+                    WHEN a.status = 'in' THEN 'in'
+                    WHEN a.status = 'out' THEN 'out'
+                    ELSE 'unknown'
+                END AS status
+            FROM players p
+            LEFT JOIN availability a
+                ON a.player_id = p.id
+                AND a.match_id = %s
+            WHERE p.active = TRUE
+            ORDER BY p.player_name
+            """,
+            (match_id,),
+        )
+
+        return cursor.fetchall()
+
+    finally:
+        cursor.close()
+        connection.close()
+        
+
 # Read the most recent complete market snapshot for the upcoming match.
 #
 # The bookmaker writes one snapshot for the entire field at a time, so all rows
@@ -327,14 +368,14 @@ def get_db_connection():
 
 
 # Build public CFB performance/history data for players in the current market.
-def get_player_data(current_market):
+def get_player_data(player_context):
     completed_matches = sheets.get_completed_matches()
     current_players = sheets.get_players()
 
     player_data = []
 
-    for market_player in current_market:
-        name = market_player["player_name"]
+    for context_player in player_context:
+        name = context_player["player_name"]
 
         history = completed_matches[
             completed_matches["Player"].str.strip().str.lower()
@@ -371,8 +412,9 @@ def get_player_data(current_market):
 
         player_data.append(
             {
-                "player_id": market_player["player_id"],
+                "player_id": context_player["player_id"],
                 "player": name,
+                "availability": context_player["status"].upper(),                
                 "normalized_cfb_index": normalized_index,
                 "matches_played": len(appearances),
                 "history": appearances,
@@ -504,14 +546,13 @@ async def main():
 
 
 # Run one gambler against the current market.
-async def run_gambler(gambler, match, current_market, semaphore):
+async def run_gambler(gambler, match, current_market, player_context, semaphore):
     async with semaphore:
         gambler_data = build_gambler_data(
             gambler,
             match,
             current_market,
         )
-
         decision = await generate_decision(gambler_data)
 
         validate_decision(
@@ -546,6 +587,7 @@ async def run_gamblers():
     if not current_market:
         return []
 
+    player_context = get_player_context(match["id"])
     gamblers = get_active_gamblers()
 
     if not gamblers:
@@ -563,6 +605,7 @@ async def run_gamblers():
             gambler,
             match,
             current_market,
+            player_context,
             semaphore,
         )
         for gambler in gamblers
