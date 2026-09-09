@@ -41,8 +41,8 @@ def american_to_implied_probability(odds):
     return abs(odds) / (abs(odds) + 100)
 
 
-# Combine database field information with spreadsheet history/current indexes.
-def build_bookie_data(match, field, player_context):
+# Combine active-player availability context with spreadsheet history/current indexes.
+def build_bookie_data(match, player_context):
     completed_matches = sheets.get_completed_matches()
     current_players = sheets.get_players()
     previous_market_prices = get_previous_market_prices(match["id"])
@@ -518,7 +518,6 @@ async def run_bookie():
 
     bookie_data = build_bookie_data(
         match,
-        field,
         player_context,
     )
 

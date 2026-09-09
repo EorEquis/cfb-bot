@@ -367,7 +367,7 @@ def get_db_connection():
     )
 
 
-# Build public CFB performance/history data for players in the current market.
+# Build public CFB performance/history data for all active players.
 def get_player_data(player_context):
     completed_matches = sheets.get_completed_matches()
     current_players = sheets.get_players()
@@ -552,6 +552,7 @@ async def run_gambler(gambler, match, current_market, player_context, semaphore)
             gambler,
             match,
             current_market,
+            player_context,
         )
         decision = await generate_decision(gambler_data)
 
