@@ -539,7 +539,7 @@ async def main():
 
     print(
         f"Tan City gamblers complete | "
-        f"Gamblers: {len(results)} | "
+        f"Decisions: {len(results)} | "
         f"Bets: {bets} | "
         f"Passes: {passes}"
     )
