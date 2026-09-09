@@ -83,7 +83,7 @@ logging.getLogger().setLevel(LOG_LEVEL)
 
 # Suppress routine HTTP success messages unless DEBUG logging was requested.
 if LOG_LEVEL != logging.DEBUG:
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpx2").setLevel(logging.WARNING)
 
 
 # Discord intents determine which categories of Discord events the bot receives.
