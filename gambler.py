@@ -16,7 +16,6 @@ import asyncio
 import json
 import logging
 import os
-import random
 
 import mysql.connector
 from openai import AsyncOpenAI
@@ -55,12 +54,13 @@ def build_gambler_data(gambler, match, current_market, player_context):
         "gambler": {
             "gambler_id": gambler["gambler_id"],
             "is_david": bool(gambler["is_david"]),
-            "irrational_mode": random.random() < 0.20,
+            "irrational_mode": False,
             "risk_tolerance": gambler["risk_tolerance"],
             "loss_aversion": gambler["loss_aversion"],
             "contrarianism": gambler["contrarianism"],
             "confidence": gambler["confidence"],
             "bankroll_discipline": gambler["bankroll_discipline"],
+            "personality": gambler["personality"],
             "starting_balance": float(gambler["starting_balance"]),
             "current_balance": float(gambler["current_balance"]),
         },
@@ -109,89 +109,24 @@ def build_gambler_data(gambler, match, current_market, player_context):
     }
 
 
-# Describe the gambler's job, personality, information, and allowed action.
+# Describe the gamblers and ask the model to make one wagering decision.
 def build_prompt(gambler_data):
     prompt = f"""
-You are a CFB GAMBLER participating in the imaginary Tan City Sportsbook.
+    Here are some human recreational gamblers:
 
-You are not the bookmaker. You are a bettor making your own wagering decisions.
+    {json.dumps(gambler_data, indent=2, default=str)}
 
-You may make AT MOST ONE decision during this run:
-- Place one wager on one player at the currently offered price.
-- Or pass.
+    Higher current_index indicates a stronger player.
 
-You may bet on the same market price again on a later run.
+    Decide whether they bet or pass.
 
-YOUR PERSONALITY:
+    If they bet, choose a player and wager amount.
 
-Your persistent behavioral traits are numerical values from 0-100:
+    Briefly explain why.
 
-- risk_tolerance:
-  Higher values mean greater willingness to take risks.
+    OUTPUT:
 
-- loss_aversion:
-  Higher values mean losses affect your future decisions more strongly.
-
-- contrarianism:
-  Higher values mean greater willingness to reject obvious or conventional choices.
-
-- confidence:
-  Higher values mean greater trust in your own conclusions.
-
-- bankroll_discipline:
-  Higher values mean greater concern for preserving your bankroll.
-  Lower values permit more aggressive or reckless betting.
-
-These traits describe who you are as a gambler. Let them interact naturally when
-deciding what you believe, whether to bet, who to bet on, and how much to wager.
-They are tendencies, not formulas.
-
-Do not mention your personality scores when explaining a wager.
-
-Your previous wagers and reasons are your own memory. How much they influence
-your current decision is up to you.
-
-If is_david is true, this gambler is David. David's supplied personality scores
-are intentional. Do not moderate them because they appear extreme.
-
-If irrational_mode is true, make an intentionally irrational gambling decision.
-You may act on a hunch, superstition, bad logic, an attractive payout, or some
-other dumb gambler reason instead of choosing the wager you think is objectively best.
-
-WHAT YOU KNOW:
-
-- Your current bankroll.
-- Your personality.
-- The current Tan City market prices.
-- Current Normalized CFB Index and completed CFB match history for active players.
-- Each active player's current availability.
-- Your own prior wagers, reasons, and any known outcomes.
-
-Higher Normalized CFB Index represents stronger current competitive strength.
-Match Performance, points, group wins, match wins, and recent form are historical
-information you may consider however you choose.
-
-IN means the player currently expects to participate and is in the betting market.
-UNKNOWN means it is not currently known whether the player will participate.
-OUT means the player currently does not expect to participate, although availability
-can change.
-
-Only players in the current Tan City market can be wagered on.
-
-You do not know the bookmaker's private reasoning. Make your own decision from
-the information available to you.
-
-Do not invent injuries, weather, course history, inside information, or other
-facts that were not supplied.
-
-Do not use handicap benefit credits or provisional offsets.
-
-You do not have to bet. If you bet, choose the player and wager amount yourself.
-Never wager more than your current bankroll.
-
-OUTPUT:
-
-Return valid JSON only.
+    Return valid JSON only.
 
 If placing a wager:
 
@@ -250,6 +185,7 @@ def get_active_gamblers():
                 contrarianism,
                 confidence,
                 bankroll_discipline,
+                personality,
                 starting_balance,
                 current_balance
             FROM gamblers
@@ -299,7 +235,7 @@ def get_player_context(match_id):
     finally:
         cursor.close()
         connection.close()
-        
+
 
 # Read the most recent complete market snapshot for the upcoming match.
 #
