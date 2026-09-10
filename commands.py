@@ -1499,6 +1499,196 @@ def register_commands(
         )
 
 
+    # Show the current Tan City market and wagering action for the upcoming match.
+    @bot.tree.command(
+        name="sportsbook",
+        description="Show the current Tan City market and wagering action",
+        guild=dev_guild
+    )
+    async def sportsbook(interaction: discord.Interaction):
+        await asyncio.to_thread(
+            log_bot_usage,
+            "sportsbook",
+            interaction.user.id
+        )
+
+        await interaction.response.defer()
+
+        if not dev_channel_only(interaction):
+            await interaction.response.send_message(
+                "CFB Bot is currently restricted to #cfb-bot-dev.",
+                ephemeral=True
+            )
+            return
+
+        def load_sportsbook(cursor):
+            cursor.execute(
+                """
+                SELECT id
+                FROM matches
+                WHERE active = TRUE
+                AND TIMESTAMP(
+                    match_date,
+                    GREATEST(
+                        COALESCE(tee_time_1, '00:00:00'),
+                        COALESCE(tee_time_2, '00:00:00'),
+                        COALESCE(tee_time_3, '00:00:00'),
+                        COALESCE(tee_time_4, '00:00:00')
+                    )
+                ) >= NOW()
+                ORDER BY match_date
+                LIMIT 1
+                """
+            )
+
+            match = cursor.fetchone()
+
+            if not match:
+                return None
+
+            match_id = match[0]
+
+            cursor.execute(
+                """
+                SELECT
+                    player_name,
+                    odds_american,
+                    effective_at
+                FROM
+                    (
+                        SELECT
+                            p.player_name,
+                            mp.odds_american,
+                            mp.effective_at,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY p.player_name
+                                ORDER BY mp.effective_at DESC
+                            ) AS rn
+                        FROM market_prices mp
+                        JOIN players p
+                            ON mp.player_id = p.id
+                    ) r
+                WHERE rn = 1
+                ORDER BY player_name
+                """
+            )
+
+            current_market = cursor.fetchall()
+
+            cursor.execute(
+                """
+                SELECT
+                    p.player_name,
+                    SUM(w.wager_amount) AS total_wagered,
+                    mp.odds_american
+                FROM wagers w
+                JOIN market_prices mp
+                    ON w.market_price_id = mp.market_price_id
+                JOIN players p
+                    ON mp.player_id = p.id
+                WHERE mp.match_id = %s
+                GROUP BY
+                    p.player_name,
+                    mp.odds_american
+                ORDER BY
+                    p.player_name,
+                    total_wagered DESC,
+                    CAST(mp.odds_american AS INTEGER) DESC
+                """,
+                (match_id,)
+            )
+
+            wagers = cursor.fetchall()
+
+            cursor.execute(
+                """
+                SELECT MAX(w.wagered_at)
+                FROM wagers w
+                JOIN market_prices mp
+                    ON w.market_price_id = mp.market_price_id
+                WHERE mp.match_id = %s
+                """,
+                (match_id,)
+            )
+
+            latest_wager = cursor.fetchone()[0]
+
+            return current_market, wagers, latest_wager
+
+        result = await asyncio.to_thread(
+            database_operation,
+            load_sportsbook
+        )
+
+        if result is None:
+            await interaction.response.send_message(
+                "🎰 **TAN CITY SPORTSBOOK**\n\n"
+                "No upcoming CFB match found."
+            )
+            return
+
+        current_market, wagers, latest_wager = result
+
+        def format_odds(odds):
+            odds = int(odds)
+
+            if odds > 0:
+                return f"+{odds}"
+
+            return str(odds)
+
+        if latest_wager:
+            sportsbook_time = latest_wager.strftime(
+                "%m/%d %I:%M %p"
+            ).lower()
+        else:
+            sportsbook_time = "no wagers yet"
+
+        lines = [
+            f"🎰 **TAN CITY SPORTS BOOK @ {sportsbook_time}**",
+            "",
+            "**CURRENT MARKET**"
+        ]
+
+        if current_market:
+            for player_name, odds_american, effective_at in current_market:
+                lines.append(
+                    f"**{player_name}** — {format_odds(odds_american)}"
+                )
+        else:
+            lines.append("No current market.")
+
+        lines.extend([
+            "",
+            "**WAGERED**"
+        ])
+
+        if wagers:
+            current_player = None
+
+            for player_name, total_wagered, odds_american in wagers:
+                if player_name != current_player:
+                    if current_player is not None:
+                        lines.append("")
+
+                    lines.append(f"**{player_name}**")
+                    current_player = player_name
+
+                lines.append(
+                    f"• ${total_wagered:,.2f} @ {format_odds(odds_american)}"
+                )
+        else:
+            lines.append("No wagers yet.")
+
+        message = "\n".join(lines)
+
+        chunks = split_discord_message(message)
+
+        await interaction.followup.send(chunks[0])
+
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk)    
+
     # Summarize availability and remaining capacity for the next active match.
     @bot.tree.command(
         name="who",
