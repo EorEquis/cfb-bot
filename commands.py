@@ -1122,7 +1122,7 @@ def register_commands(
                     for player_name, notes in cursor.fetchall()
                 }
 
-            # Load David's Tan City bankroll and any unsettled wagers on this match.
+            # Load David's Tan City bankroll.
             cursor.execute(
                 """
                 SELECT
@@ -1141,6 +1141,49 @@ def register_commands(
             if david is not None:
                 david_gambler_id, starting_balance, current_balance = david
 
+                # Load the latest sportsbook price for every player.
+                cursor.execute(
+                    """
+                    SELECT
+                        player_name,
+                        odds_american
+                    FROM
+                        (
+                            SELECT
+                                p.player_name,
+                                mp.odds_american,
+                                mp.effective_at,
+                                ROW_NUMBER() OVER (
+                                    PARTITION BY p.player_name
+                                    ORDER BY mp.effective_at DESC
+                                ) AS rn
+                            FROM market_prices mp
+                            JOIN players p
+                                ON mp.player_id = p.id
+                            WHERE mp.match_id = %s
+                        ) r
+                    WHERE rn = 1
+                    ORDER BY player_name
+                    """,
+                    (match_id,)
+                )
+
+                market = [
+                    {
+                        "Player": player_name,
+                        "Current Odds": odds_american,
+                        "David Wagers": []
+                    }
+                    for player_name, odds_american
+                    in cursor.fetchall()
+                ]
+
+                market_by_player = {
+                    entry["Player"]: entry
+                    for entry in market
+                }
+
+                # Attach David's unsettled wagers to the player he wagered on.
                 cursor.execute(
                     """
                     SELECT
@@ -1165,19 +1208,22 @@ def register_commands(
                     )
                 )
 
-                david_wagers = [
-                    {
-                        "Player": player_name,
+                david_wagers = []
+
+                for player_name, odds_american, wager_amount in cursor.fetchall():
+                    wager = {
                         "Odds": odds_american,
                         "Wager Amount": float(wager_amount)
                     }
-                    for player_name, odds_american, wager_amount
-                    in cursor.fetchall()
-                ]
 
-                # Only expose gambling context to the preview when David actually
-                # has action on the upcoming match.
-                if david_wagers:
+                    david_wagers.append(wager)
+
+                    if player_name in market_by_player:
+                        market_by_player[player_name]["David Wagers"].append(
+                            wager
+                        )
+
+                if market:
                     david_gambling = {
                         "Starting Bankroll": float(starting_balance),
                         "Current Bankroll": float(current_balance),
@@ -1185,7 +1231,7 @@ def register_commands(
                             wager["Wager Amount"]
                             for wager in david_wagers
                         ),
-                        "Wagers": david_wagers
+                        "Sportsbook Market": market
                     }
 
             return (
@@ -1298,7 +1344,8 @@ def register_commands(
                 "CFB Sports Network's pregame desk has suffered "
                 "a catastrophic production failure."
             )
-
+            
+            
     # Save the invoking player's favorite quote after basic validation.
     @bot.tree.command(
         name="quote",
