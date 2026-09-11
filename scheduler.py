@@ -21,7 +21,9 @@ logger = logging.getLogger(__name__)
 CENTRAL_TIME = ZoneInfo("America/Chicago")
 
 BETTING_TIMES = [
+    datetime.time(hour=0, minute=0, tzinfo=CENTRAL_TIME),
     datetime.time(hour=6, minute=0, tzinfo=CENTRAL_TIME),
+    datetime.time(hour=12, minute=0, tzinfo=CENTRAL_TIME),
     datetime.time(hour=18, minute=0, tzinfo=CENTRAL_TIME),
 ]
 
