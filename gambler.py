@@ -114,9 +114,7 @@ def build_prompt(gambler_data):
     prompt = f"""
     Here are some human recreational gamblers:
 
-    {json.dumps(gambler_data, indent=2, default=str)}
-
-    Higher current_index indicates a stronger player.
+    Higher normalized_cfb_index indicates a stronger player.
 
     Decide whether they bet or pass.
 
