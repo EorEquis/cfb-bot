@@ -9,6 +9,7 @@
 ###################
 
 import json
+import os
 
 from openai import AsyncOpenAI
 
@@ -16,6 +17,7 @@ from openai import AsyncOpenAI
 # Shared asynchronous OpenAI client used for wrapup generation.
 client = AsyncOpenAI()
 
+MODEL = os.getenv("WRAPUP_MODEL", "gpt-5.6-luna")
 
 async def generate_wrapup(match_data):
     # Build the complete broadcast instructions and append the factual match data.
@@ -249,7 +251,7 @@ MATCH DATA:
 
     # Generate the recap using the configured CFB model.
     response = await client.responses.create(
-        model="gpt-5.6-sol",
+        model=MODEL,
         input=prompt
     )
 
