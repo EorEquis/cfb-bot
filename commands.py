@@ -1078,17 +1078,25 @@ def register_commands(
                 """
                 SELECT
                     p.player_name,
-                    a.status
-                FROM availability a
-                JOIN players p
-                    ON p.id = a.player_id
-                WHERE a.match_id = %s
-                AND a.status IN ('in', 'maybe')
-                AND p.active = TRUE
+                    CASE
+                        WHEN a.status = 'in' THEN 'in'
+                        WHEN a.status = 'maybe' THEN 'maybe'
+                        ELSE 'unknown'
+                    END AS status
+                FROM players p
+                LEFT JOIN availability a
+                    ON a.player_id = p.id
+                    AND a.match_id = %s
+                WHERE p.active = TRUE
+                AND (
+                    a.status IN ('in', 'maybe')
+                    OR a.status IS NULL
+                )
                 ORDER BY
-                    CASE a.status
-                        WHEN 'in' THEN 1
-                        WHEN 'maybe' THEN 2
+                    CASE
+                        WHEN a.status = 'in' THEN 1
+                        WHEN a.status = 'maybe' THEN 2
+                        ELSE 3
                     END,
                     p.player_name
                 """,

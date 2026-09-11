@@ -8,6 +8,7 @@
 #           OpenAI model/version: GPT-5.6 Sol
 ###################
 
+from datetime import datetime
 from openai import AsyncOpenAI
 
 
@@ -27,7 +28,9 @@ The fact of your wagers may color the broadcast, but do not disclose wager speci
 
 Do not infer gender.
 
-You may use emojis.
+Emojis are encouraged.
+
+The current time is {datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")}.
 
 UPCOMING MATCH DATA:
 
