@@ -8,12 +8,17 @@
 #           OpenAI model/version: GPT-5.6 Sol
 ###################
 
+import os
+
 from datetime import datetime
 from openai import AsyncOpenAI
 
 
+
 # Create the shared asynchronous OpenAI client used for preview requests.
 client = AsyncOpenAI()
+
+MODEL = os.getenv("PREVIEW_MODEL", "gpt-5.6-luna")
 
 
 async def generate_preview(preview_data):
@@ -45,7 +50,7 @@ End EXACTLY with:
 
     # Submit the completed prompt and wait asynchronously for the model response.
     response = await client.responses.create(
-        model="gpt-5.6-sol",
+        model=MODEL,
         input=prompt
     )
 
