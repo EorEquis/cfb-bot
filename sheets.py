@@ -348,7 +348,7 @@ def get_preview_data(
 
     players = []
 
-# Preserve each player's IN/MAYBE status alongside their complete match history.
+# Preserve each player's IN/MAYBE/UNKNOWN status alongside their complete match history.
     for name, status in player_availability:
         history = historical_df[
             historical_df["Player"] == name
@@ -419,9 +419,14 @@ def get_preview_data(
             status == "maybe"
             for _, status in player_availability
         ),
+        "Players UNKNOWN": sum(
+            status == "unknown"
+            for _, status in player_availability
+        ),
         "Field Status": (
             "Players marked IN are the current field. "
-            "Players marked MAYBE are possible additions and are not currently in the field."
+            "Players marked MAYBE are possible additions. "
+            "Players marked UNKNOWN have not responded."
         ),
         "Players": players,
         "Current CFB Holder": current_holder
