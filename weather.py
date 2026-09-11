@@ -40,7 +40,7 @@ def get_forecast(match_date, first_tee_time):
 
     end_datetime = (
         start_datetime
-        + timedelta(hours=5)
+        + timedelta(hours=4)
     )
 
     # Request the hourly weather measurements used by the bot.
