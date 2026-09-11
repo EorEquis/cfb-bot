@@ -189,7 +189,7 @@ DATA:
     return prompt
 
 
-# Read active gamblers who currently have money available to wager.
+# Read David if solvent, plus a random sample of other solvent gamblers.
 def get_active_gamblers():
     connection = get_db_connection()
     cursor = connection.cursor(dictionary=True)
@@ -210,13 +210,43 @@ def get_active_gamblers():
                 current_balance
             FROM gamblers
             WHERE current_balance > 0
-            ORDER BY gambler_id
-            LIMIT %s
-            """,
-            (NUMBER_GAMBLERS,),
+              AND is_david = TRUE
+            LIMIT 1
+            """
         )
 
-        return cursor.fetchall()
+        david = cursor.fetchone()
+
+        other_count = NUMBER_GAMBLERS - (1 if david else 0)
+
+        cursor.execute(
+            """
+            SELECT
+                gambler_id,
+                is_david,
+                risk_tolerance,
+                loss_aversion,
+                contrarianism,
+                confidence,
+                bankroll_discipline,
+                personality,
+                starting_balance,
+                current_balance
+            FROM gamblers
+            WHERE current_balance > 0
+              AND is_david = FALSE
+            ORDER BY RAND()
+            LIMIT %s
+            """,
+            (other_count,),
+        )
+
+        gamblers = cursor.fetchall()
+
+        if david:
+            gamblers.insert(0, david)
+
+        return gamblers
 
     finally:
         cursor.close()
