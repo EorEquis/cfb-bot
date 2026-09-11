@@ -39,8 +39,7 @@ client = AsyncOpenAI()
 
 
 # Combine everything the gambler is allowed to know into one data structure.
-def build_gambler_data(gambler, match, current_market, player_context):
-    player_data = get_player_data(player_context)
+def build_gambler_data(gambler, match, current_market, player_data):
     wager_history = get_wager_history(gambler["gambler_id"])
 
     tee_times = [
@@ -110,58 +109,81 @@ def build_gambler_data(gambler, match, current_market, player_context):
 
 
 # Describe the gamblers and ask the model to make one wagering decision.
-def build_prompt(gambler_data):
+def build_prompt(gambler_data_list):
+    shared = gambler_data_list[0]
+
+    payload = {
+        "upcoming_match": shared["upcoming_match"],
+        "current_market": shared["current_market"],
+        "player_data": shared["player_data"],
+        "gamblers": [
+            {
+                "gambler": data["gambler"],
+                "wager_history": data["wager_history"],
+            }
+            for data in gambler_data_list
+        ],
+    }
+
     prompt = f"""
-    Here are some human recreational gamblers:
+Here are some human recreational gamblers.
 
-    Higher normalized_cfb_index indicates a stronger player.
+Higher normalized_cfb_index indicates a stronger player.
 
-    Decide whether they bet or pass.
+Evaluate each gambler independently.
 
-    If they bet, choose a player and wager amount.
+For each gambler, decide whether they bet or pass.
 
-    Briefly explain why.
+If they bet, choose a player and wager amount.
 
-    OUTPUT:
+Briefly explain why.
 
-    Return valid JSON only.
+OUTPUT:
+
+Return valid JSON only as an array with exactly one object per gambler.
+
+Each object must include gambler_id.
 
 If placing a wager:
 
 {{
+  "gambler_id": 123,
   "bet": true,
-  "market_price_id": 123,
-  "player_id": 456,
+  "market_price_id": 456,
+  "player_id": 789,
   "player": "Player Name",
   "wager_amount": 250.00,
-  "reason": "Short explanation of why you believe this wager is worth making."
+  "reason": "Short explanation."
 }}
 
 If passing:
 
 {{
+  "gambler_id": 123,
   "bet": false,
   "market_price_id": null,
   "player_id": null,
   "player": null,
   "wager_amount": 0,
-  "reason": "Short explanation of why you are passing."
+  "reason": "Short explanation."
 }}
 
 RULES FOR THE JSON:
 - Return valid JSON only.
+- Return exactly one decision for every supplied gambler.
 - Do not include markdown code fences.
 - Do not include commentary before or after the JSON.
-- If betting, market_price_id must exactly match one of the supplied current
-  market prices.
-- If betting, player_id and player must match the player associated with that
-  market_price_id.
+- Evaluate gamblers independently.
+- Do not allow one gambler's decision to influence another gambler.
+- gambler_id must exactly match the gambler being evaluated.
+- If betting, market_price_id must exactly match one supplied current market price.
+- If betting, player_id and player must match that market_price_id.
 - wager_amount must be numeric.
-- wager_amount must not exceed current_balance.
+- wager_amount must not exceed that gambler's current_balance.
 - If passing, wager_amount must be 0.
 
 DATA:
-{json.dumps(gambler_data, indent=2, default=str)}
+{json.dumps(payload, indent=2, default=str)}
 """.strip()
 
     return prompt
@@ -434,8 +456,8 @@ def get_wager_history(gambler_id):
 
 
 # Ask the model to make one gambler decision.
-async def generate_decision(gambler_data):
-    prompt = build_prompt(gambler_data)
+async def generate_decisions(gambler_data_list):
+    prompt = build_prompt(gambler_data_list)
 
     response = await client.responses.create(
         model=MODEL,
@@ -469,16 +491,44 @@ async def main():
     )
 
 
-# Run one gambler against the current market.
-async def run_gambler(gambler, match, current_market, player_context, semaphore):
-    async with semaphore:
-        gambler_data = build_gambler_data(
+async def run_gambler_batch(gamblers, match, current_market, player_data):
+    gambler_data_list = [
+        build_gambler_data(
             gambler,
             match,
             current_market,
-            player_context,
+            player_data,
         )
-        decision = await generate_decision(gambler_data)
+        for gambler in gamblers
+    ]
+
+    decisions = await generate_decisions(gambler_data_list)
+
+    if len(decisions) != len(gambler_data_list):
+        raise ValueError(
+            f"Expected {len(gambler_data_list)} decisions, got {len(decisions)}"
+        )
+
+    data_by_id = {
+        data["gambler"]["gambler_id"]: data
+        for data in gambler_data_list
+    }
+
+    gambler_by_id = {
+        gambler["gambler_id"]: gambler
+        for gambler in gamblers
+    }
+
+    results = []
+
+    for decision in decisions:
+        gambler_id = decision.pop("gambler_id")
+
+        if gambler_id not in data_by_id:
+            raise ValueError(f"Unexpected gambler_id returned: {gambler_id}")
+
+        gambler_data = data_by_id[gambler_id]
+        gambler = gambler_by_id[gambler_id]
 
         validate_decision(
             decision,
@@ -493,11 +543,13 @@ async def run_gambler(gambler, match, current_market, player_context, semaphore)
 
         if decision["bet"]:
             result["new_balance"] = save_wager(
-                gambler["gambler_id"],
+                gambler_id,
                 decision,
             )
 
-        return result
+        results.append(result)
+
+    return results
 
 
 # Run one complete Tan City gambler cycle.
@@ -513,6 +565,7 @@ async def run_gamblers():
         return []
 
     player_context = get_player_context(match["id"])
+    player_data = get_player_data(player_context)
     gamblers = get_active_gamblers()
 
     if not gamblers:
@@ -523,37 +576,40 @@ async def run_gamblers():
         len(gamblers),
     )
 
-    semaphore = asyncio.Semaphore(CONCURRENT_GAMBLERS)
-
-    tasks = [
-        run_gambler(
-            gambler,
-            match,
-            current_market,
-            player_context,
-            semaphore,
-        )
-        for gambler in gamblers
+    batches = [
+        gamblers[i:i + CONCURRENT_GAMBLERS]
+        for i in range(0, len(gamblers), CONCURRENT_GAMBLERS)
     ]
 
-    results = await asyncio.gather(
+    tasks = [
+        run_gambler_batch(
+            batch,
+            match,
+            current_market,
+            player_data,
+        )
+        for batch in batches
+    ]
+
+    batch_results = await asyncio.gather(
         *tasks,
         return_exceptions=True,
     )
 
     successful_results = []
 
-    for gambler, result in zip(gamblers, results):
+    for batch, result in zip(batches, batch_results):
         if isinstance(result, Exception):
             logger.error(
-                "Tan City gambler %s failed | %s: %s",
-                gambler["gambler_id"],
+                "Tan City gambler batch %s-%s failed | %s: %s",
+                batch[0]["gambler_id"],
+                batch[-1]["gambler_id"],
                 type(result).__name__,
                 result,
             )
             continue
 
-        successful_results.append(result)
+        successful_results.extend(result)
 
     return successful_results
 
