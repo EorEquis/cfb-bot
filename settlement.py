@@ -13,11 +13,8 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-import os
-
 import mysql.connector
-
-import sheets
+import os
 
 
 MYSQL_HOST = os.getenv("MYSQL_HOST")
@@ -96,28 +93,8 @@ def main():
         )
 
 
-# Settle wagers for only the most recent completed match in the authoritative
-# spreadsheet. Older completed matches are intentionally ignored.
+# Settle wagers for only the most recent completed match.
 def run_settlement():
-    latest_match = sheets.get_latest_match()
-
-    if latest_match is None or latest_match.empty:
-        return []
-
-    winner_rows = latest_match[
-        latest_match["Match Winner"] == 1
-    ]
-
-    if len(winner_rows) != 1:
-        raise RuntimeError(
-            "Latest completed match does not have exactly one Match Winner."
-        )
-
-    winner_row = winner_rows.iloc[0]
-
-    match_date = str(winner_row["Match Date"])
-    winner_name = str(winner_row["Player"]).strip()
-
     connection = get_db_connection()
     cursor = connection.cursor(dictionary=True)
 
@@ -125,37 +102,39 @@ def run_settlement():
         cursor.execute(
             """
             SELECT
-                id,
-                match_date
-            FROM matches
-            WHERE match_date = %s
-              AND active = TRUE
+                match_id,
+                match_date,
+                player_name
+            FROM vw_completed_match_results
+            WHERE match_winner = 1
+            ORDER BY
+                match_date DESC,
+                match_id DESC
             LIMIT 1
-            """,
-            (match_date,),
+            """
         )
 
-        db_match = cursor.fetchone()
+        completed_match = cursor.fetchone()
 
     finally:
         cursor.close()
 
     try:
-        if db_match is None:
+        if completed_match is None:
             return []
 
         summary = settle_match(
             connection,
-            db_match["id"],
-            str(db_match["match_date"]),
-            winner_name,
+            completed_match["match_id"],
+            str(completed_match["match_date"]),
+            completed_match["player_name"],
         )
 
         return [summary]
 
     finally:
         connection.close()
-
+        
 
 # Settle every currently unsettled wager for one completed match.
 def settle_match(connection, match_id, match_date, winner_name):
