@@ -522,15 +522,20 @@ async def main():
 
 
 async def run_gambler_batch(gamblers, match, current_market, player_data):
-    gambler_data_list = [
-        build_gambler_data(
-            gambler,
-            match,
-            current_market,
-            player_data,
-        )
-        for gambler in gamblers
-    ]
+    def build_batch_data():
+        return [
+            build_gambler_data(
+                gambler,
+                match,
+                current_market,
+                player_data,
+            )
+            for gambler in gamblers
+        ]
+
+    gambler_data_list = await asyncio.to_thread(
+        build_batch_data
+    )
 
     decisions = await generate_decisions(gambler_data_list)
 
@@ -572,7 +577,8 @@ async def run_gambler_batch(gamblers, match, current_market, player_data):
         }
 
         if decision["bet"]:
-            result["new_balance"] = save_wager(
+            result["new_balance"] = await asyncio.to_thread(
+                save_wager,
                 gambler_id,
                 decision,
             )
@@ -584,19 +590,32 @@ async def run_gambler_batch(gamblers, match, current_market, player_data):
 
 # Run one complete Tan City gambler cycle.
 async def run_gamblers():
-    match = get_upcoming_match()
+    match = await asyncio.to_thread(get_upcoming_match)
 
     if match is None:
         return []
 
-    current_market = get_current_market(match["id"])
+    current_market = await asyncio.to_thread(
+        get_current_market,
+        match["id"],
+    )
 
     if not current_market:
         return []
 
-    player_context = get_player_context(match["id"])
-    player_data = get_player_data(player_context)
-    gamblers = get_active_gamblers()
+    player_context = await asyncio.to_thread(
+        get_player_context,
+        match["id"],
+    )
+
+    player_data = await asyncio.to_thread(
+        get_player_data,
+        player_context,
+    )
+
+    gamblers = await asyncio.to_thread(
+        get_active_gamblers
+    )
 
     if not gamblers:
         return []
