@@ -1,16 +1,20 @@
 ###################
 # Created : 2026-09-08 GB
 # Purpose : Runs scheduled CFB Bot background jobs.
-#           Tan City creates a new market four times daily, then runs the
-#           gambler agents after the market is successfully created.
+#           Tan City creates markets and runs gambler agents.
+#           Database sync mirrors authoritative spreadsheet data into MySQL.
 # Notes   : Most code was generated with assistance from ChatGPT.
 #           OpenAI model/version: GPT-5.6 Sol
 ###################
 
+import asyncio
 import datetime
 import logging
+import mysql.connector
+import os
 
 from bookie import run_bookie
+from db_sync import sync_db
 from discord.ext import tasks
 from gambler import run_gamblers
 from zoneinfo import ZoneInfo
@@ -20,12 +24,89 @@ logger = logging.getLogger(__name__)
 
 CENTRAL_TIME = ZoneInfo("America/Chicago")
 
+MYSQL_HOST = os.getenv("MYSQL_HOST")
+MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
+MYSQL_USER = os.getenv("MYSQL_USER")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
+
 BETTING_TIMES = [
     datetime.time(hour=0, minute=0, tzinfo=CENTRAL_TIME),
     datetime.time(hour=6, minute=0, tzinfo=CENTRAL_TIME),
     datetime.time(hour=12, minute=0, tzinfo=CENTRAL_TIME),
     datetime.time(hour=18, minute=0, tzinfo=CENTRAL_TIME),
 ]
+
+DB_SYNC_FIXED_TIMES = {
+    (0, 0),
+    (6, 0),
+    (12, 0),
+    (18, 0),
+}
+
+_last_db_sync_minute = None
+
+
+def _get_today_match_status(today):
+    connection = mysql.connector.connect(
+        connection_timeout=5,
+        host=MYSQL_HOST,
+        port=MYSQL_PORT,
+        database=MYSQL_DATABASE,
+        user=MYSQL_USER,
+        password=MYSQL_PASSWORD
+    )
+
+    cursor = None
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT
+                m.id,
+                TIMESTAMP(
+                    m.match_date,
+                    GREATEST(
+                        COALESCE(m.tee_time_1, '00:00:00'),
+                        COALESCE(m.tee_time_2, '00:00:00'),
+                        COALESCE(m.tee_time_3, '00:00:00'),
+                        COALESCE(m.tee_time_4, '00:00:00')
+                    )
+                ),
+                (
+                    SELECT COUNT(*)
+                    FROM match_results mr
+                    WHERE mr.match_id = m.id
+                    AND mr.match_winner = 1
+                )
+            FROM matches m
+            WHERE m.match_date = %s
+            AND m.active = TRUE
+            LIMIT 1
+            """,
+            (today,)
+        )
+
+        return cursor.fetchone()
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        connection.close()
+
+
+async def run_db_sync():
+    logger.info("CFB database sync starting")
+
+    try:
+        await asyncio.to_thread(sync_db)
+        logger.info("CFB database sync complete")
+
+    except Exception:
+        logger.exception("CFB database sync failed")
 
 
 # Run one complete Tan City betting cycle.
@@ -71,7 +152,61 @@ async def run_betting_cycle():
         logger.exception("Tan City betting cycle failed")
 
 
-# Run the Tan City betting cycle at midnight, 6 AM, noon, and 6 PM Central Thurs - Sun
+# Check twice per minute so scheduled minute boundaries cannot be missed.
+# Actual database sync is limited to once per minute.
+@tasks.loop(seconds=30)
+async def db_sync_scheduler():
+    global _last_db_sync_minute
+
+    now = datetime.datetime.now(CENTRAL_TIME)
+    current_minute = now.replace(second=0, microsecond=0)
+
+    if current_minute == _last_db_sync_minute:
+        return
+
+    should_sync = (now.hour, now.minute) in DB_SYNC_FIXED_TIMES
+
+    # Sunday
+    if now.weekday() == 6:
+
+        # Additional hourly syncs from 4 AM through 7 AM.
+        if now.hour in (4, 5, 6, 7) and now.minute == 0:
+            should_sync = True
+
+        match_status = await asyncio.to_thread(
+            _get_today_match_status,
+            now.date()
+        )
+
+        if match_status is not None:
+            match_id, latest_tee_datetime, match_winner_count = match_status
+
+            latest_tee_datetime = latest_tee_datetime.replace(
+                tzinfo=CENTRAL_TIME
+            )
+
+            aggressive_sync_start = (
+                latest_tee_datetime
+                + datetime.timedelta(hours=2)
+            )
+
+            # Once the aggressive window begins, sync every minute until
+            # exactly one match winner exists.
+            if (
+                now >= aggressive_sync_start
+                and match_winner_count != 1
+            ):
+                should_sync = True
+
+    if not should_sync:
+        return
+
+    _last_db_sync_minute = current_minute
+
+    await run_db_sync()
+
+
+# Run the Tan City betting cycle at midnight, 6 AM, noon, and 6 PM Central Thurs - Sun.
 @tasks.loop(time=BETTING_TIMES)
 async def tan_city_scheduler():
     if datetime.datetime.now(CENTRAL_TIME).weekday() < 3:

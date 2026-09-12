@@ -14,6 +14,7 @@ import logging
 import mysql.connector
 
 from datetime import datetime
+from db_sync import sync_db
 from discord import app_commands
 from helpers import (
     active_match_autocomplete,
@@ -1353,6 +1354,50 @@ def register_commands(
                 "a catastrophic production failure."
             )
             
+
+    # Manually synchronize authoritative spreadsheet data into the database.
+    @bot.tree.command(
+        name="syncdb",
+        description="Synchronize CFB spreadsheet data to the database",
+        guild=dev_guild
+    )
+    @admin_only
+    async def syncdb(
+        interaction: discord.Interaction
+    ):
+        await asyncio.to_thread(
+            log_bot_usage,
+            "syncdb",
+            interaction.user.id
+        )
+
+        if not bot_admin_only(interaction):
+            await interaction.response.send_message(
+                "You are not authorized to use this command.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(
+            ephemeral=True
+        )
+
+        try:
+            await asyncio.to_thread(sync_db)
+
+            await interaction.edit_original_response(
+                content="CFB database sync complete."
+            )
+
+        except Exception as e:
+            logger.exception(
+                "Manual database sync failed"
+            )
+
+            await interaction.edit_original_response(
+                content=f"CFB database sync failed: {e}"
+            )
+
             
     # Save the invoking player's favorite quote after basic validation.
     @bot.tree.command(
