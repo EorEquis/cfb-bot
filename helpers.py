@@ -87,15 +87,6 @@ async def active_match_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> list[app_commands.Choice[str]]:
-    def load_matches():
-        connection = mysql.connector.connect(
-            connection_timeout=5,
-            host=_mysql_host,
-            port=_mysql_port,
-            database=_mysql_database,
-            user=_mysql_user,
-            password=_mysql_password
-        )
 
     def load_matches(cursor):
         cursor.execute(
