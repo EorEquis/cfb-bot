@@ -20,7 +20,7 @@ import sys
 from app_log import DatabaseLogHandler
 from commands import register_commands
 from discord import app_commands
-from scheduler import tan_city_scheduler
+from scheduler import db_sync_scheduler, tan_city_scheduler
 
 
 # Create a standard Python logger for this module.
@@ -120,7 +120,10 @@ class CFBBot(discord.Client):
         
         # Start scheduled background jobs once during bot startup.
         if not tan_city_scheduler.is_running():
-            tan_city_scheduler.start()        
+            tan_city_scheduler.start()
+
+        if not db_sync_scheduler.is_running():
+            db_sync_scheduler.start()      
 
         print("SYNCED COMMANDS:", [cmd.name for cmd in synced])
 

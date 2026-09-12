@@ -19,11 +19,8 @@ import os
 import mysql.connector
 from openai import AsyncOpenAI
 
-import sheets
-
 
 MODEL = os.getenv("BOOKIE_MODEL", "gpt-5.6-sol")
-
 MYSQL_HOST = os.getenv("MYSQL_HOST")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
@@ -41,55 +38,97 @@ def american_to_implied_probability(odds):
     return abs(odds) / (abs(odds) + 100)
 
 
-# Combine active-player availability context with spreadsheet history/current indexes.
+# Combine active-player availability context with DB history/current indexes.
 def build_bookie_data(match, player_context):
-    completed_matches = sheets.get_completed_matches()
-    current_players = sheets.get_players()
     previous_market_prices = get_previous_market_prices(match["id"])
     current_wagers = get_current_wagers(match["id"])
     current_wager_exposure = build_wager_exposure(current_wagers)
 
-    player_data = []
+    connection = get_db_connection()
+    cursor = connection.cursor(dictionary=True)
 
-    for db_player in player_context:
-        name = db_player["player_name"]
+    try:
+        cursor.execute(
+            """
+            SELECT
+                s.player_id,
+                s.normalized_cfb_index
+            FROM vw_player_career_stats s
+            WHERE s.active = TRUE
+            """
+        )
 
-        history = completed_matches[
-            completed_matches["Player"].str.strip().str.lower()
-            == name.strip().lower()
-        ].sort_values("MatchID")
+        current_players = {
+            row["player_id"]: row
+            for row in cursor.fetchall()
+        }
 
-        player_row = current_players[
-            current_players["Player Name"].str.strip().str.lower()
-            == name.strip().lower()
-        ]
+        cursor.execute(
+            """
+            SELECT
+                player_id,
+                match_id,
+                match_date,
+                player_points,
+                pre_match_index,
+                match_performance,
+                group_winner,
+                match_winner
+            FROM vw_completed_match_results
+            ORDER BY
+                player_id,
+                match_date,
+                match_id
+            """
+        )
 
-        normalized_index = None
+        history_by_player = {}
 
-        if not player_row.empty:
-            value = player_row.iloc[0]["Normalized CFB Index"]
-
-            if value == value:
-                normalized_index = float(value)
-
-        appearances = []
-
-        for _, row in history.iterrows():
-            appearances.append(
+        for row in cursor.fetchall():
+            history_by_player.setdefault(
+                row["player_id"],
+                []
+            ).append(
                 {
-                    "match_id": int(row["MatchID"]),
-                    "match_date": str(row["Match Date"]),
-                    "player_points": int(row["Player Points"]),
-                    "pre_match_index": float(row["Pre-Match Index"]),
-                    "match_performance": float(row["Match Performance"]),
-                    "group_winner": bool(row["Group Winner"] == 1),
-                    "match_winner": bool(row["Match Winner"] == 1),
+                    "match_id": int(row["match_id"]),
+                    "match_date": str(row["match_date"]),
+                    "player_points": int(row["player_points"]),
+                    "pre_match_index": float(row["pre_match_index"]),
+                    "match_performance": float(row["match_performance"]),
+                    "group_winner": bool(row["group_winner"]),
+                    "match_winner": bool(row["match_winner"]),
                 }
             )
 
+    finally:
+        cursor.close()
+        connection.close()
+
+    player_data = []
+
+    for db_player in player_context:
+        player_id = db_player["player_id"]
+        name = db_player["player_name"]
+
+        player_row = current_players.get(player_id)
+        normalized_index = None
+
+        if (
+            player_row is not None
+            and player_row["normalized_cfb_index"] is not None
+        ):
+            normalized_index = float(
+                player_row["normalized_cfb_index"]
+            )
+
+        appearances = history_by_player.get(
+            player_id,
+            []
+        )
+
         player_data.append(
             {
-                "player_id": db_player["player_id"],
+                "player_id": player_id,
                 "player": name,
                 "availability": db_player["status"].upper(),
                 "normalized_cfb_index": normalized_index,
@@ -130,7 +169,7 @@ def build_bookie_data(match, player_context):
         ],
         "current_wager_exposure": current_wager_exposure,
     }
-
+    
 
 # Describe the bookie's job and provide only the data it may use.
 def build_prompt(bookie_data):
