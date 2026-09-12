@@ -17,6 +17,7 @@ from bookie import run_bookie
 from db_sync import sync_db
 from discord.ext import tasks
 from gambler import run_gamblers
+from settlement import run_settlement
 from zoneinfo import ZoneInfo
 
 
@@ -104,9 +105,11 @@ async def run_db_sync():
     try:
         await asyncio.to_thread(sync_db)
         logger.info("CFB database sync complete")
+        return True
 
     except Exception:
         logger.exception("CFB database sync failed")
+        return False
 
 
 # Run one complete Tan City betting cycle.
@@ -165,6 +168,7 @@ async def db_sync_scheduler():
         return
 
     should_sync = (now.hour, now.minute) in DB_SYNC_FIXED_TIMES
+    aggressive_sync = False
 
     # Sunday
     if now.weekday() == 6:
@@ -197,13 +201,45 @@ async def db_sync_scheduler():
                 and match_winner_count != 1
             ):
                 should_sync = True
+                aggressive_sync = True
 
     if not should_sync:
         return
 
     _last_db_sync_minute = current_minute
 
-    await run_db_sync()
+    sync_succeeded = await run_db_sync()
+
+    # An aggressive sync that mirrors the completed match ends the one-minute
+    # cycle. Run Tan City settlement immediately after that successful sync.
+    if aggressive_sync and sync_succeeded:
+        match_status = await asyncio.to_thread(
+            _get_today_match_status,
+            now.date()
+        )
+
+        if match_status is not None:
+            match_id, latest_tee_datetime, match_winner_count = match_status
+
+            if match_winner_count == 1:
+                try:
+                    summaries = await asyncio.to_thread(run_settlement)
+
+                    for summary in summaries:
+                        logger.info(
+                            "Tan City settlement complete | Match: %s | "
+                            "Winner: %s | Settled: %s | Wins: %s | Losses: %s | "
+                            "Bookie net: $%.2f",
+                            summary["match_id"],
+                            summary["winner"],
+                            summary["settled"],
+                            summary["wins"],
+                            summary["losses"],
+                            summary["bookie_net"],
+                        )
+
+                except Exception:
+                    logger.exception("Tan City settlement failed")
 
 
 # Run the Tan City betting cycle at midnight, 6 AM, noon, and 6 PM Central Thurs - Sun.
