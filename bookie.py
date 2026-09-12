@@ -504,19 +504,26 @@ async def main():
 
 # Run one complete Tan City bookie cycle.
 async def run_bookie():
-    match = get_upcoming_match()
+    match = await asyncio.to_thread(get_upcoming_match)
 
     if match is None:
         return None
 
-    field = get_current_field(match["id"])
+    field = await asyncio.to_thread(
+        get_current_field,
+        match["id"],
+    )
 
     if not field:
         return None
 
-    player_context = get_player_context(match["id"])
+    player_context = await asyncio.to_thread(
+        get_player_context,
+        match["id"],
+    )
 
-    bookie_data = build_bookie_data(
+    bookie_data = await asyncio.to_thread(
+        build_bookie_data,
         match,
         player_context,
     )
@@ -532,7 +539,8 @@ async def run_bookie():
         market["prices"]
     )
 
-    save_market_prices(
+    await asyncio.to_thread(
+        save_market_prices,
         match["id"],
         market["prices"],
     )
