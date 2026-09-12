@@ -554,6 +554,24 @@ async def run_gambler_batch(gamblers, match, current_market, player_data):
         for gambler in gamblers
     }
 
+    expected_ids = set(data_by_id)
+
+    returned_ids = [
+        decision.get("gambler_id")
+        for decision in decisions
+    ]
+
+    if len(returned_ids) != len(set(returned_ids)):
+        raise ValueError(
+            f"Duplicate gambler_id returned: {returned_ids}"
+        )
+
+    if set(returned_ids) != expected_ids:
+        raise ValueError(
+            f"Gambler IDs did not match batch. "
+            f"Expected: {sorted(expected_ids)} | "
+            f"Returned: {sorted(returned_ids)}"
+        )
     results = []
 
     for decision in decisions:
