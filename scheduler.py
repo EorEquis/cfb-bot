@@ -71,7 +71,10 @@ async def run_betting_cycle():
         logger.exception("Tan City betting cycle failed")
 
 
-# Run the Tan City betting cycle at midnight, 6 AM, noon, and 6 PM Central.
+# Run the Tan City betting cycle at midnight, 6 AM, noon, and 6 PM Central Thurs - Sun
 @tasks.loop(time=BETTING_TIMES)
 async def tan_city_scheduler():
+    if datetime.datetime.now(CENTRAL_TIME).weekday() < 3:
+        return
+
     await run_betting_cycle()
