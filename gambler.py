@@ -16,24 +16,21 @@ import asyncio
 import json
 import logging
 import os
-
 import mysql.connector
 from openai import AsyncOpenAI
-
-import sheets
 
 
 logger = logging.getLogger(__name__)
 
+
 CONCURRENT_GAMBLERS = int(os.getenv("CONCURRENT_GAMBLERS", "10"))
 MODEL = os.getenv("GAMBLER_MODEL", "gpt-5.6-sol")
-NUMBER_GAMBLERS = int(os.getenv("NUMBER_GAMBLERS", "10"))
-
 MYSQL_HOST = os.getenv("MYSQL_HOST")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
 MYSQL_USER = os.getenv("MYSQL_USER")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
+NUMBER_GAMBLERS = int(os.getenv("NUMBER_GAMBLERS", "10"))
 
 client = AsyncOpenAI()
 
@@ -345,52 +342,93 @@ def get_db_connection():
 
 # Build public CFB performance/history data for all active players.
 def get_player_data(player_context):
-    completed_matches = sheets.get_completed_matches()
-    current_players = sheets.get_players()
+    connection = get_db_connection()
+    cursor = connection.cursor(dictionary=True)
+
+    try:
+        cursor.execute(
+            """
+            SELECT
+                s.player_id,
+                s.normalized_cfb_index
+            FROM vw_player_career_stats s
+            WHERE s.active = TRUE
+            """
+        )
+
+        current_players = {
+            row["player_id"]: row
+            for row in cursor.fetchall()
+        }
+
+        cursor.execute(
+            """
+            SELECT
+                player_id,
+                match_id,
+                match_date,
+                player_points,
+                pre_match_index,
+                match_performance,
+                group_winner,
+                match_winner
+            FROM vw_completed_match_results
+            ORDER BY
+                player_id,
+                match_date,
+                match_id
+            """
+        )
+
+        history_by_player = {}
+
+        for row in cursor.fetchall():
+            history_by_player.setdefault(
+                row["player_id"],
+                []
+            ).append(
+                {
+                    "match_id": int(row["match_id"]),
+                    "match_date": str(row["match_date"]),
+                    "player_points": int(row["player_points"]),
+                    "pre_match_index": float(row["pre_match_index"]),
+                    "match_performance": float(row["match_performance"]),
+                    "group_winner": bool(row["group_winner"]),
+                    "match_winner": bool(row["match_winner"]),
+                }
+            )
+
+    finally:
+        cursor.close()
+        connection.close()
 
     player_data = []
 
     for context_player in player_context:
+        player_id = context_player["player_id"]
         name = context_player["player_name"]
 
-        history = completed_matches[
-            completed_matches["Player"].str.strip().str.lower()
-            == name.strip().lower()
-        ].sort_values("MatchID")
-
-        player_row = current_players[
-            current_players["Player Name"].str.strip().str.lower()
-            == name.strip().lower()
-        ]
-
+        player_row = current_players.get(player_id)
         normalized_index = None
 
-        if not player_row.empty:
-            value = player_row.iloc[0]["Normalized CFB Index"]
-
-            if value == value:
-                normalized_index = float(value)
-
-        appearances = []
-
-        for _, row in history.iterrows():
-            appearances.append(
-                {
-                    "match_id": int(row["MatchID"]),
-                    "match_date": str(row["Match Date"]),
-                    "player_points": int(row["Player Points"]),
-                    "pre_match_index": float(row["Pre-Match Index"]),
-                    "match_performance": float(row["Match Performance"]),
-                    "group_winner": bool(row["Group Winner"] == 1),
-                    "match_winner": bool(row["Match Winner"] == 1),
-                }
+        if (
+            player_row is not None
+            and player_row["normalized_cfb_index"] is not None
+        ):
+            normalized_index = float(
+                player_row["normalized_cfb_index"]
             )
+
+        appearances = history_by_player.get(
+            player_id,
+            []
+        )
 
         player_data.append(
             {
-                "player_id": context_player["player_id"],
+                "player_id": player_id,
                 "player": name,
-                "availability": context_player["status"].upper(),                
+                "availability": context_player["status"].upper(),
                 "normalized_cfb_index": normalized_index,
                 "matches_played": len(appearances),
                 "history": appearances,

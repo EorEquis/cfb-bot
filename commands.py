@@ -31,12 +31,6 @@ from helpers import (
 )
 from power import generate_power
 from preview import generate_preview
-from sheets import (
-    get_latest_match_with_history,
-    get_player_profile,
-    get_power_data,
-    get_preview_data
-)
 from weather import (
     format_time,
     get_forecast,
@@ -847,14 +841,28 @@ def register_commands(
             cursor.execute(
                 """
                 SELECT
-                    player_name,
-                    discord_display_name,
-                    quote
-                FROM players
-                WHERE active = TRUE
+                    p.player_name,
+                    p.discord_display_name,
+                    s.quote,
+                    s.normalized_cfb_index,
+                    s.matches_played,
+                    s.total_points,
+                    s.group_wins,
+                    s.match_wins,
+                    (
+                        SELECT r.match_performance
+                        FROM vw_completed_match_results r
+                        WHERE r.player_id = p.id
+                        ORDER BY r.match_date DESC, r.match_id DESC
+                        LIMIT 1
+                    ) AS recent_performance
+                FROM players p
+                JOIN vw_player_career_stats s
+                    ON s.player_id = p.id
+                WHERE p.active = TRUE
                 AND (
-                        player_name = %s
-                    OR discord_display_name = %s
+                        p.player_name = %s
+                    OR p.discord_display_name = %s
                 )
                 LIMIT 1
                 """,
@@ -878,12 +886,17 @@ def register_commands(
             )
             return
 
-        player_name, display_name, quote = row
-        
-        profile = await asyncio.to_thread(
-            get_player_profile,
-            player_name
-        )
+        (
+            player_name,
+            display_name,
+            quote,
+            current_index,
+            matches_played,
+            total_points,
+            group_wins,
+            match_wins,
+            recent_performance
+        ) = row
 
         message = (
             f"🏌️ **CFB PLAYER PROFILE**\n\n"
@@ -895,17 +908,17 @@ def register_commands(
 
         message += (
             f"\n\n"
-            f"📊 **CFB Index:** {profile['Current Index']:.2f}\n"
-            f"⛳ **Matches Played:** {profile['Matches Played']}\n"
-            f"🎯 **Total Points:** {profile['Total Points']:g}\n"
-            f"🏆 **Group Wins:** {profile['Group Wins']}\n"
-            f"👑 **Match Wins:** {profile['Match Wins']}"
+            f"📊 **CFB Index:** {current_index:.2f}\n"
+            f"⛳ **Matches Played:** {matches_played}\n"
+            f"🎯 **Total Points:** {total_points:g}\n"
+            f"🏆 **Group Wins:** {group_wins}\n"
+            f"👑 **Match Wins:** {match_wins}"
         )
 
-        if profile["Recent Performance"] is not None:
+        if recent_performance is not None:
             message += (
                 f"\n📈 **Last Match Performance:** "
-                f"{profile['Recent Performance']:.2f}"
+                f"{recent_performance:.2f}"
             )
 
         if quote and quote.strip():
@@ -951,29 +964,93 @@ def register_commands(
             interaction.user.id
         )
 
-        def load_player_names(cursor):
+        def load_power_data(cursor):
             cursor.execute(
                 """
-                SELECT player_name
-                FROM players
-                WHERE active = TRUE
-                ORDER BY player_name
+                SELECT
+                    s.player_id,
+                    s.player_name,
+                    s.normalized_cfb_index,
+                    s.matches_played,
+                    s.total_points,
+                    s.group_wins,
+                    s.match_wins
+                FROM vw_player_career_stats s
+                WHERE s.active = TRUE
+                ORDER BY s.player_name
                 """
             )
 
-            return [
-                row[0]
-                for row in cursor.fetchall()
-            ]
+            player_rows = cursor.fetchall()
 
-        player_names = await asyncio.to_thread(
-            database_operation,
-            load_player_names
-        )
+            players = []
+
+            for (
+                player_id,
+                player_name,
+                normalized_cfb_index,
+                matches_played,
+                total_points,
+                group_wins,
+                match_wins
+            ) in player_rows:
+
+                cursor.execute(
+                    """
+                    SELECT match_performance
+                    FROM vw_completed_match_results
+                    WHERE player_id = %s
+                    ORDER BY match_date DESC, match_id DESC
+                    LIMIT 3
+                    """,
+                    (player_id,)
+                )
+
+                recent_performances = [
+                    float(row[0])
+                    for row in cursor.fetchall()
+                ]
+
+                players.append({
+                    "Player": player_name,
+                    "Normalized CFB Index": (
+                        float(normalized_cfb_index)
+                        if normalized_cfb_index is not None
+                        else None
+                    ),
+                    "Matches Played": matches_played,
+                    "Total Points": float(total_points),
+                    "Group Wins": group_wins,
+                    "Match Wins": match_wins,
+                    "Recent Performances": recent_performances
+                })
+
+            cursor.execute(
+                """
+                SELECT player_name
+                FROM vw_completed_match_results
+                WHERE match_winner = 1
+                ORDER BY match_date DESC, match_id DESC
+                LIMIT 1
+                """
+            )
+
+            holder_row = cursor.fetchone()
+
+            current_holder = (
+                holder_row[0]
+                if holder_row is not None
+                else None
+            )
+
+            return {
+                "Players": players,
+                "Current CFB Holder": current_holder
+            }
 
         power_data = await asyncio.to_thread(
-            get_power_data,
-            player_names
+            database_operation,
+            load_power_data
         )
 
         try:
@@ -1243,18 +1320,85 @@ def register_commands(
                         "Sportsbook Market": market
                     }
 
+            # Load completed-match history for players in the upcoming field.
+            player_history = {}
+
+            if player_names:
+                cursor.execute(
+                    """
+                    SELECT
+                        player_name,
+                        match_id,
+                        match_date,
+                        player_points,
+                        match_performance,
+                        group_winner,
+                        match_winner
+                    FROM vw_completed_match_results
+                    WHERE player_name IN ({})
+                    ORDER BY match_date, match_id
+                    """.format(
+                        ",".join(["%s"] * len(player_names))
+                    ),
+                    tuple(player_names)
+                )
+
+                for (
+                    player_name,
+                    history_match_id,
+                    history_match_date,
+                    player_points,
+                    match_performance,
+                    group_winner,
+                    match_winner
+                ) in cursor.fetchall():
+
+                    player_history.setdefault(
+                        player_name,
+                        []
+                    ).append({
+                        "Match ID": history_match_id,
+                        "Match Date": str(history_match_date),
+                        "Points": player_points,
+                        "Match Performance": float(match_performance),
+                        "Group Winner": bool(group_winner),
+                        "Match Winner": bool(match_winner)
+                    })
+
+            cursor.execute(
+                """
+                SELECT player_name
+                FROM vw_completed_match_results
+                WHERE match_winner = 1
+                ORDER BY match_date DESC, match_id DESC
+                LIMIT 1
+                """
+            )
+
+            holder_row = cursor.fetchone()
+
+            current_holder = (
+                holder_row[0]
+                if holder_row is not None
+                else None
+            )
+            
             return (
                 match,
                 player_availability,
                 player_notes,
-                david_gambling
+                david_gambling,
+                player_history,
+                current_holder
             )
 
         (
             match,
             player_availability,
             player_notes,
-            david_gambling
+            david_gambling,
+            player_history,
+            current_holder
         ) = await asyncio.to_thread(
             database_operation,
             load_preview_context
@@ -1305,13 +1449,65 @@ def register_commands(
         )
 
         try:
-            preview_data = await asyncio.to_thread(
-                get_preview_data,
-                player_availability,
-                match_date,
-                location,
-                tee_times
-            )
+            formatted_tee_times = []
+
+            for tee_time in tee_times:
+                total_seconds = int(tee_time.total_seconds())
+                hours = total_seconds // 3600
+                minutes = (total_seconds % 3600) // 60
+
+                period = "AM" if hours < 12 else "PM"
+                display_hour = hours % 12
+
+                if display_hour == 0:
+                    display_hour = 12
+
+                formatted_tee_times.append(
+                    f"{display_hour}:{minutes:02d} {period}"
+                )
+
+            preview_players = []
+
+            for name, status in player_availability:
+                history = player_history.get(name, [])
+
+                preview_players.append({
+                    "Player": name,
+                    "Availability": status.upper(),
+                    "Matches Played": len(history),
+                    "History": history
+                })
+
+            preview_data = {
+                "Match Date": str(match_date),
+                "Days Until Match": (
+                    match_date - datetime.now().date()
+                ).days,
+                "Location": location,
+                "Tee Times": formatted_tee_times,
+                "Number of Tee Times": len(formatted_tee_times),
+                "Maximum Groups": len(formatted_tee_times),
+                "Maximum Players": len(formatted_tee_times) * 4,
+                "Players IN": sum(
+                    status == "in"
+                    for _, status in player_availability
+                ),
+                "Players MAYBE": sum(
+                    status == "maybe"
+                    for _, status in player_availability
+                ),
+                "Players UNKNOWN": sum(
+                    status == "unknown"
+                    for _, status in player_availability
+                ),
+                "Field Status": (
+                    "Players marked IN are the current field. "
+                    "Players marked MAYBE are possible additions. "
+                    "Players marked UNKNOWN have not responded."
+                ),
+                "Players": preview_players,
+                "Current CFB Holder": current_holder
+            }
 
             preview_data["Player Notes"] = player_notes
 
@@ -1948,13 +2144,224 @@ def register_commands(
         )
 
         try:
-            match_data = await asyncio.to_thread(
-                get_latest_match_with_history
-            )
+            def load_wrapup_data(cursor):
+                cursor.execute(
+                    """
+                    SELECT
+                        match_id,
+                        match_date
+                    FROM vw_completed_match_results
+                    ORDER BY match_date DESC, match_id DESC
+                    LIMIT 1
+                    """
+                )
 
-            # Load player notes and David's settled Tan City wagers for the
-            # completed match being wrapped up.
-            def load_wrapup_context(cursor):
+                latest_match = cursor.fetchone()
+
+                if latest_match is None:
+                    raise RuntimeError(
+                        "No completed CFB matches found."
+                    )
+
+                match_id, match_date = latest_match
+
+                cursor.execute(
+                    """
+                    SELECT
+                        group_id,
+                        players_in_group,
+                        total_points,
+                        ending_hole,
+                        player_id,
+                        player_name,
+                        player_points,
+                        group_winner,
+                        match_winner,
+                        pre_match_index,
+                        match_performance
+                    FROM vw_completed_match_results
+                    WHERE match_id = %s
+                    ORDER BY group_id, player_name
+                    """,
+                    (match_id,)
+                )
+
+                match_rows = cursor.fetchall()
+
+                groups_by_id = {}
+                current_player_ids = []
+
+                for (
+                    group_id,
+                    players_in_group,
+                    total_points,
+                    ending_hole,
+                    player_id,
+                    player_name,
+                    player_points,
+                    group_winner,
+                    match_winner,
+                    pre_match_index,
+                    match_performance
+                ) in match_rows:
+
+                    current_player_ids.append(player_id)
+
+                    if group_id not in groups_by_id:
+                        groups_by_id[group_id] = {
+                            "Group": int(group_id),
+                            "Players in Group": int(players_in_group),
+                            "Total Points": int(total_points),
+                            "Ending Hole": int(ending_hole),
+                            "Players": []
+                        }
+
+                    groups_by_id[group_id]["Players"].append({
+                        "Player": player_name,
+                        "Player ID": player_id,
+                        "Points": int(player_points),
+                        "Pre-Match Index": float(pre_match_index),
+                        "Match Performance": float(match_performance),
+                        "Group Winner": bool(group_winner),
+                        "Match Winner": bool(match_winner),
+                        "Previous Performance": None,
+                        "Performance Change": None,
+                        "Previous Matches": 0,
+                        "Previous Group Wins": 0,
+                        "Previous Match Wins": 0
+                    })
+
+                match_data = {
+                    "Match ID": int(match_id),
+                    "Match Date": str(match_date),
+                    "Groups": list(groups_by_id.values())
+                }
+
+                if current_player_ids:
+                    cursor.execute(
+                        """
+                        SELECT
+                            player_id,
+                            match_date,
+                            match_id,
+                            match_performance,
+                            group_winner,
+                            match_winner
+                        FROM vw_completed_match_results
+                        WHERE player_id IN ({})
+                        AND (
+                            match_date < %s
+                            OR (
+                                match_date = %s
+                                AND match_id < %s
+                            )
+                        )
+                        ORDER BY
+                            player_id,
+                            match_date,
+                            match_id
+                        """.format(
+                            ",".join(["%s"] * len(current_player_ids))
+                        ),
+                        tuple(current_player_ids)
+                        + (
+                            match_date,
+                            match_date,
+                            match_id
+                        )
+                    )
+
+                    history_by_player = {}
+
+                    for (
+                        player_id,
+                        history_match_date,
+                        history_match_id,
+                        match_performance,
+                        group_winner,
+                        match_winner
+                    ) in cursor.fetchall():
+
+                        history_by_player.setdefault(
+                            player_id,
+                            []
+                        ).append({
+                            "Match Performance": float(match_performance),
+                            "Group Winner": bool(group_winner),
+                            "Match Winner": bool(match_winner)
+                        })
+
+                    for group in match_data["Groups"]:
+                        for player in group["Players"]:
+                            history = history_by_player.get(
+                                player["Player ID"],
+                                []
+                            )
+
+                            player["Previous Matches"] = len(history)
+                            player["Previous Group Wins"] = sum(
+                                item["Group Winner"]
+                                for item in history
+                            )
+                            player["Previous Match Wins"] = sum(
+                                item["Match Winner"]
+                                for item in history
+                            )
+
+                            if history:
+                                previous_performance = history[-1][
+                                    "Match Performance"
+                                ]
+
+                                player[
+                                    "Previous Performance"
+                                ] = previous_performance
+
+                                player[
+                                    "Performance Change"
+                                ] = round(
+                                    player["Match Performance"]
+                                    - previous_performance,
+                                    2
+                                )
+
+                all_players = [
+                    player
+                    for group in match_data["Groups"]
+                    for player in group["Players"]
+                ]
+
+                players_with_change = [
+                    player
+                    for player in all_players
+                    if player["Performance Change"] is not None
+                ]
+
+                highlights = {}
+
+                if players_with_change:
+                    highlights["Biggest Improvement"] = max(
+                        players_with_change,
+                        key=lambda p: p["Performance Change"]
+                    )
+
+                    highlights["Biggest Decline"] = min(
+                        players_with_change,
+                        key=lambda p: p["Performance Change"]
+                    )
+
+                highlights["Best Performance"] = max(
+                    all_players,
+                    key=lambda p: p["Match Performance"]
+                )
+
+                highlights["Worst Performance"] = min(
+                    all_players,
+                    key=lambda p: p["Match Performance"]
+                )
+
+                match_data["Highlights"] = highlights
+
                 cursor.execute(
                     """
                     SELECT
@@ -1972,26 +2379,6 @@ def register_commands(
                     for player_name, notes in cursor.fetchall()
                 }
 
-                # Match the authoritative spreadsheet result to the bot-created
-                # database match by date.
-                cursor.execute(
-                    """
-                    SELECT id
-                    FROM matches
-                    WHERE match_date = %s
-                    AND active = TRUE
-                    LIMIT 1
-                    """,
-                    (match_data["Match Date"],)
-                )
-
-                db_match = cursor.fetchone()
-
-                if db_match is None:
-                    return player_notes, None
-
-                match_id = db_match[0]
-
                 cursor.execute(
                     """
                     SELECT
@@ -2004,89 +2391,89 @@ def register_commands(
                 )
 
                 david = cursor.fetchone()
+                david_gambling = None
 
-                if david is None:
-                    return player_notes, None
+                if david is not None:
+                    david_gambler_id, current_balance = david
 
-                david_gambler_id, current_balance = david
-
-                # Only David's own settled wagers are exposed to the wrapup.
-                # Private wager reasons are deliberately excluded.
-                cursor.execute(
-                    """
-                    SELECT
-                        p.player_name,
-                        mp.odds_american,
-                        w.wager_amount,
-                        w.outcome,
-                        w.payout
-                    FROM wagers w
-                    JOIN market_prices mp
-                        ON mp.market_price_id = w.market_price_id
-                    JOIN players p
-                        ON p.id = mp.player_id
-                    WHERE w.gambler_id = %s
-                    AND mp.match_id = %s
-                    AND w.outcome IS NOT NULL
-                    ORDER BY
-                        w.wagered_at,
-                        w.wager_id
-                    """,
-                    (
-                        david_gambler_id,
-                        match_id
+                    cursor.execute(
+                        """
+                        SELECT
+                            p.player_name,
+                            mp.odds_american,
+                            w.wager_amount,
+                            w.outcome,
+                            w.payout
+                        FROM wagers w
+                        JOIN market_prices mp
+                            ON mp.market_price_id = w.market_price_id
+                        JOIN players p
+                            ON p.id = mp.player_id
+                        WHERE w.gambler_id = %s
+                        AND mp.match_id = %s
+                        AND w.outcome IS NOT NULL
+                        ORDER BY
+                            w.wagered_at,
+                            w.wager_id
+                        """,
+                        (
+                            david_gambler_id,
+                            match_id
+                        )
                     )
+
+                    wager_rows = cursor.fetchall()
+
+                    if wager_rows:
+                        david_wagers = [
+                            {
+                                "Player": player_name,
+                                "Odds": odds_american,
+                                "Wager Amount": float(wager_amount),
+                                "Outcome": outcome,
+                                "Payout": float(payout or 0)
+                            }
+                            for (
+                                player_name,
+                                odds_american,
+                                wager_amount,
+                                outcome,
+                                payout
+                            ) in wager_rows
+                        ]
+
+                        david_gambling = {
+                            "Current Bankroll": float(current_balance),
+                            "Total Wagered": round(
+                                sum(
+                                    wager["Wager Amount"]
+                                    for wager in david_wagers
+                                ),
+                                2
+                            ),
+                            "Total Payout": round(
+                                sum(
+                                    wager["Payout"]
+                                    for wager in david_wagers
+                                ),
+                                2
+                            ),
+                            "Wagers": david_wagers
+                        }
+
+                return (
+                    match_data,
+                    player_notes,
+                    david_gambling
                 )
 
-                wager_rows = cursor.fetchall()
-
-                if not wager_rows:
-                    return player_notes, None
-
-                david_wagers = [
-                    {
-                        "Player": player_name,
-                        "Odds": odds_american,
-                        "Wager Amount": float(wager_amount),
-                        "Outcome": outcome,
-                        "Payout": float(payout or 0)
-                    }
-                    for (
-                        player_name,
-                        odds_american,
-                        wager_amount,
-                        outcome,
-                        payout
-                    ) in wager_rows
-                ]
-
-                david_gambling = {
-                    "Current Bankroll": float(current_balance),
-                    "Total Wagered": round(
-                        sum(
-                            wager["Wager Amount"]
-                            for wager in david_wagers
-                        ),
-                        2
-                    ),
-                    "Total Payout": round(
-                        sum(
-                            wager["Payout"]
-                            for wager in david_wagers
-                        ),
-                        2
-                    ),
-                    "Wagers": david_wagers
-                }
-
-                return player_notes, david_gambling
-
             (
+                match_data,
                 player_notes,
                 david_gambling
             ) = await asyncio.to_thread(
                 database_operation,
-                load_wrapup_context
+                load_wrapup_data
             )
 
             match_data["Player Notes"] = player_notes
