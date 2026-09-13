@@ -13,6 +13,7 @@ import discord
 import logging
 import mysql.connector
 
+from dailystat import generate_dailystat
 from datetime import datetime
 from db_sync import sync_db
 from discord import app_commands
@@ -220,6 +221,115 @@ def register_commands(
             f"Match added for **{match_date}** at **{location}**.",
             ephemeral=True
         )
+
+
+    # Find one ridiculous but defensible observation in complete CFB match history.
+    @bot.tree.command(
+        name="dailystat",
+        description="Get today's unnecessary CFB statistical analysis",
+        guild=dev_guild
+    )
+    async def dailystat(interaction: discord.Interaction):
+        if not dev_channel_only(interaction):
+            await interaction.response.send_message(
+                "CFB Bot is currently restricted to #cfb-bot-dev.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer()
+
+        usage_id = await asyncio.to_thread(
+            log_bot_usage,
+            "dailystat",
+            interaction.user.id
+        )
+
+        def load_history(cursor):
+            cursor.execute(
+                """
+                SELECT
+                    match_id,
+                    match_date,
+                    location,
+                    notes,
+                    special_rule,
+                    group_id,
+                    players_in_group,
+                    total_points,
+                    ending_hole,
+                    player_id,
+                    player_name,
+                    player_points,
+                    group_winner,
+                    match_winner,
+                    pre_match_index,
+                    match_performance,
+                    net_handicap_credits
+                FROM vw_completed_match_results
+                ORDER BY
+                    match_date,
+                    match_id,
+                    group_id,
+                    player_name
+                """
+            )
+
+            columns = [
+                column[0]
+                for column in cursor.description
+            ]
+
+            return [
+                dict(zip(columns, row))
+                for row in cursor.fetchall()
+            ]
+
+        history_data = await asyncio.to_thread(
+            database_operation,
+            load_history
+        )
+
+        if not history_data:
+            await interaction.edit_original_response(
+                content="The Ministry of Statistics has investigated and found no statistics."
+            )
+            return
+
+        try:
+            result = await generate_dailystat(history_data)
+
+            await asyncio.to_thread(
+                mark_bot_usage_api_call,
+                usage_id
+            )
+
+            await asyncio.to_thread(
+                update_bot_usage_tokens,
+                usage_id,
+                result["input_tokens"],
+                result["output_tokens"]
+            )
+
+            messages = split_discord_message(result["text"])
+
+            await interaction.edit_original_response(
+                content=messages[0]
+            )
+
+            for message in messages[1:]:
+                await interaction.followup.send(message)
+
+        except Exception:
+            logger.exception("Failed to generate daily CFB statistic.")
+
+            await interaction.edit_original_response(
+                content=(
+                    "The CFB Department of Unnecessary Analytics has suffered "
+                    "an extremely necessary systems failure."
+                )
+            )
+            
 
     # Soft-delete an active match selected by date.
     @bot.tree.command(
