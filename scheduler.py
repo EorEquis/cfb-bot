@@ -242,10 +242,16 @@ async def db_sync_scheduler():
                     logger.exception("Tan City settlement failed")
 
 
-# Run the Tan City betting cycle at midnight, 6 AM, noon, and 6 PM Central Thurs - Sun.
+# Run the Tan City betting cycle at midnight, 6 AM, noon, and 6 PM Central Thurs - Sat.
+# On Sunday, run only at midnight and 6 AM.
 @tasks.loop(time=BETTING_TIMES)
 async def tan_city_scheduler():
-    if datetime.datetime.now(CENTRAL_TIME).weekday() < 3:
+    now = datetime.datetime.now(CENTRAL_TIME)
+
+    if now.weekday() < 3:
+        return
+
+    if now.weekday() == 6 and now.hour not in (0, 6):
         return
 
     await run_betting_cycle()
