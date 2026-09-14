@@ -567,7 +567,8 @@ def register_commands(
         )
 
         lines = [
-            f"📖 **CFB Bot v{bot_version} Commands**",
+            f"📖 CFB Bot v{bot_version} Commands",
+            "**Bold = admin-only.**" if is_admin else "",
             ""
         ]
 
@@ -586,9 +587,18 @@ def register_commands(
                 else:
                     usage += f" [{display_name}]"
 
-            lines.append(
-                f"`{usage}` — {command.description}"
+            command_line = f"`{usage}` — {command.description}"
+
+            command_is_admin_only = getattr(
+                command.callback,
+                "admin_only",
+                False
             )
+
+            if command_is_admin_only:
+                command_line = f"**{command_line}**"
+
+            lines.append(command_line)
 
             for param in command.parameters:
                 if param.description:
