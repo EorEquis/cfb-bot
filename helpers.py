@@ -12,6 +12,8 @@
 import asyncio
 import discord
 import mysql.connector
+import re
+
 from discord import app_commands
 
 
@@ -55,6 +57,66 @@ def _database_operation(operation, commit=False):
             cursor.close()
 
         connection.close()
+
+
+def _split_oversized_discord_section(section, limit):
+    chunks = []
+
+    while len(section) > limit:
+        target = len(section) // 2
+        minimum = max(0, target - 500)
+        maximum = min(len(section), target + 500)
+
+        sentence_breaks = [
+            match.end()
+            for match in re.finditer(
+                r"(?<=[.!?])(?:[ \t]+|\n+)",
+                section[minimum:maximum]
+            )
+        ]
+
+        if sentence_breaks:
+            split_at = min(
+                (
+                    minimum + position
+                    for position in sentence_breaks
+                ),
+                key=lambda position: abs(position - target)
+            )
+        else:
+            split_at = section.rfind("\n", 0, limit)
+
+            if split_at == -1:
+                split_at = section.rfind(" ", 0, limit)
+
+            if split_at == -1:
+                split_at = limit
+
+        chunks.append(section[:split_at].strip())
+        section = section[split_at:].strip()
+
+    if section:
+        chunks.append(section)
+
+    return chunks
+
+
+def _split_discord_sections(text):
+    lines = text.split("\n")
+    sections = []
+    current = []
+
+    for line in lines:
+        if re.match(r"^##\s+\S", line) and current:
+            sections.append("\n".join(current).strip())
+            current = []
+
+        current.append(line)
+
+    if current:
+        sections.append("\n".join(current).strip())
+
+    return [section for section in sections if section]
 
 
 def configure_helpers(
@@ -685,27 +747,42 @@ async def set_availability(
         ephemeral=True
     )
 
+def split_discord_message(text, limit=1950):
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
 
-def split_discord_message(text, limit=2000):
+    sections = _split_discord_sections(text)
     chunks = []
+    current = ""
 
-    while len(text) > limit:
-        # Prefer splitting at a line break
-        split_at = text.rfind("\n", 0, limit)
+    for section in sections:
+        if len(section) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
 
-        # Otherwise split at a space
-        if split_at == -1:
-            split_at = text.rfind(" ", 0, limit)
+            oversized_chunks = _split_oversized_discord_section(
+                section,
+                limit
+            )
 
-        # Absolute fallback
-        if split_at == -1:
-            split_at = limit
+            chunks.extend(oversized_chunks[:-1])
+            current = oversized_chunks[-1]
+            continue
 
-        chunks.append(text[:split_at])
-        text = text[split_at:].lstrip()
+        candidate = (
+            f"{current}\n\n{section}"
+            if current
+            else section
+        )
 
-    if text:
-        chunks.append(text)
+        if len(candidate) <= limit:
+            current = candidate
+        else:
+            chunks.append(current)
+            current = section
+
+    if current:
+        chunks.append(current)
 
     return chunks
 
