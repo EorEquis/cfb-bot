@@ -107,7 +107,10 @@ def _split_discord_sections(text):
     current = []
 
     for line in lines:
-        if re.match(r"^##\s+\S", line) and current:
+        is_heading = re.match(r"^##\s+\S", line)
+        is_numbered_entry = re.match(r"^\*\*\d+\.\s+\S", line)
+
+        if (is_heading or is_numbered_entry) and current:
             sections.append("\n".join(current).strip())
             current = []
 
