@@ -7,9 +7,11 @@
 #           Chat title: CFB Index
 #           OpenAI model/version: GPT-5.6 Sol
 ###################
+import os
 
 from openai import AsyncOpenAI
 
+MODEL = os.getenv("POWER_MODEL", "gpt-5.6-luna")
 
 # Create the shared asynchronous OpenAI client used for power ranking requests.
 client = AsyncOpenAI()
@@ -80,7 +82,7 @@ DATA:
 
     # Submit the completed prompt and wait asynchronously for the model response.
     response = await client.responses.create(
-        model="gpt-5.6-sol",
+        model=MODEL,
         input=prompt
     )
 
