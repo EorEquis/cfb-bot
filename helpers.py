@@ -63,9 +63,9 @@ def _split_oversized_discord_section(section, limit):
     chunks = []
 
     while len(section) > limit:
-        target = len(section) // 2
+        target = min(len(section) // 2, limit)
         minimum = max(0, target - 500)
-        maximum = min(len(section), target + 500)
+        maximum = min(limit, target + 500)
 
         sentence_breaks = [
             match.end()
@@ -108,7 +108,7 @@ def _split_discord_sections(text):
 
     for line in lines:
         is_heading = re.match(r"^##\s+\S", line)
-        is_numbered_entry = re.match(r"^\*\*\d+\.\s+\S", line)
+        is_numbered_entry = re.match(r"^\d+\.\s+\S", line)
 
         if (is_heading or is_numbered_entry) and current:
             sections.append("\n".join(current).strip())
