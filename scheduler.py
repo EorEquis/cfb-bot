@@ -99,6 +99,36 @@ def _get_today_match_status(today):
         connection.close()
 
 
+def _rollover_gambler_balances():
+    connection = mysql.connector.connect(
+        connection_timeout=5,
+        host=MYSQL_HOST,
+        port=MYSQL_PORT,
+        database=MYSQL_DATABASE,
+        user=MYSQL_USER,
+        password=MYSQL_PASSWORD
+    )
+
+    cursor = None
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            UPDATE gamblers
+            SET previous_balance = cycle_start_balance
+            """
+        )
+
+        connection.commit()
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        connection.close()
+        
 async def run_db_sync():
     logger.info("CFB database sync starting")
 
@@ -241,6 +271,26 @@ async def db_sync_scheduler():
                 except Exception:
                     logger.exception("Tan City settlement failed")
 
+
+# Preserve the previous Tan City cycle's starting balances before
+# the new betting cycle begins Thursday.
+@tasks.loop(
+    time=datetime.time(hour=0, minute=0, tzinfo=CENTRAL_TIME)
+)
+async def tan_city_balance_scheduler():
+    now = datetime.datetime.now(CENTRAL_TIME)
+
+    # Wednesday
+    if now.weekday() != 2:
+        return
+
+    try:
+        await asyncio.to_thread(_rollover_gambler_balances)
+        logger.info("Tan City gambler balance rollover complete")
+
+    except Exception:
+        logger.exception("Tan City gambler balance rollover failed")
+        
 
 # Run the Tan City betting cycle at midnight, 6 AM, noon, and 6 PM Central Thurs - Sat.
 # On Sunday, run only at midnight and 6 AM.

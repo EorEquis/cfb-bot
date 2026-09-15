@@ -264,6 +264,15 @@ def settle_match(connection, match_id, match_date, winner_name):
                 "Bookie balance row was not updated exactly once."
             )
 
+        # Snapshot each gambler's settled balance as the starting balance
+        # for the next Tan City betting cycle.
+        cursor.execute(
+            """
+            UPDATE gamblers
+            SET cycle_start_balance = current_balance
+            """
+        )
+
         connection.commit()
 
         return {

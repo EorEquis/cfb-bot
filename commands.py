@@ -32,12 +32,15 @@ from helpers import (
 )
 from power import generate_power
 from preview import generate_preview
+from tancity import generate_tan_city
+from tan_city_bot import send_tan_city_episode
 from weather import (
     format_time,
     get_forecast,
     weather_emoji
 )
 from wrapup import generate_wrapup
+
 
 logger = logging.getLogger(__name__)
 
@@ -1670,50 +1673,6 @@ def register_commands(
                 "a catastrophic production failure."
             )
             
-
-    # Manually synchronize authoritative spreadsheet data into the database.
-    @bot.tree.command(
-        name="syncdb",
-        description="Synchronize CFB spreadsheet data to the database",
-        guild=dev_guild
-    )
-    @admin_only
-    async def syncdb(
-        interaction: discord.Interaction
-    ):
-        await asyncio.to_thread(
-            log_bot_usage,
-            "syncdb",
-            interaction.user.id
-        )
-
-        if not bot_admin_only(interaction):
-            await interaction.response.send_message(
-                "You are not authorized to use this command.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.defer(
-            ephemeral=True
-        )
-
-        try:
-            await asyncio.to_thread(sync_db)
-
-            await interaction.edit_original_response(
-                content="CFB database sync complete."
-            )
-
-        except Exception as e:
-            logger.exception(
-                "Manual database sync failed"
-            )
-
-            await interaction.edit_original_response(
-                content=f"CFB database sync failed: {e}"
-            )
-
             
     # Save the invoking player's favorite quote after basic validation.
     @bot.tree.command(
@@ -2104,6 +2063,142 @@ def register_commands(
 
         for chunk in chunks[1:]:
             await interaction.followup.send(chunk)    
+
+
+    # Manually synchronize authoritative spreadsheet data into the database.
+    @bot.tree.command(
+        name="syncdb",
+        description="Synchronize CFB spreadsheet data to the database",
+        guild=dev_guild
+    )
+    @admin_only
+    async def syncdb(
+        interaction: discord.Interaction
+    ):
+        await asyncio.to_thread(
+            log_bot_usage,
+            "syncdb",
+            interaction.user.id
+        )
+
+        if not bot_admin_only(interaction):
+            await interaction.response.send_message(
+                "You are not authorized to use this command.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(
+            ephemeral=True
+        )
+
+        try:
+            await asyncio.to_thread(sync_db)
+
+            await interaction.edit_original_response(
+                content="CFB database sync complete."
+            )
+
+        except Exception as e:
+            logger.exception(
+                "Manual database sync failed"
+            )
+
+            await interaction.edit_original_response(
+                content=f"CFB database sync failed: {e}"
+            )
+
+
+    # Generate a Tan City After Dark pre-match or post-match episode.
+    @bot.tree.command(
+        name="tancity",
+        description="Generate a Tan City After Dark episode",
+        guild=dev_guild
+    )
+    @admin_only
+    @app_commands.describe(
+        mode="Episode type"
+    )
+    @app_commands.choices(
+        mode=[
+            app_commands.Choice(name="pre", value="pre"),
+            app_commands.Choice(name="post", value="post")
+        ]
+    )
+    async def tancity(
+        interaction: discord.Interaction,
+        mode: app_commands.Choice[str]
+    ):
+        if not dev_channel_only(interaction):
+            await interaction.response.send_message(
+                "CFB Bot is currently restricted to #cfb-bot-dev.",
+                ephemeral=True
+            )
+            return
+
+        if not bot_admin_only(interaction):
+            await interaction.response.send_message(
+                "You are not authorized to use this command.",
+                ephemeral=True
+            )
+            return
+
+        if (
+            mode.value == "pre"
+            and datetime.now().weekday() != 3
+        ):
+            await interaction.response.send_message(
+                "The betting window does not open until Thursday.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            "🎙️ **Let's check in with Tan City After Dark...**"
+        )
+
+        usage_id = await asyncio.to_thread(
+            log_bot_usage,
+            "tancity",
+            interaction.user.id
+        )
+
+        try:
+            await asyncio.to_thread(
+                mark_bot_usage_api_call,
+                usage_id
+            )
+
+            result = await generate_tan_city(mode.value)
+
+            await asyncio.to_thread(
+                update_bot_usage_tokens,
+                usage_id,
+                result["input_tokens"],
+                result["output_tokens"]
+            )
+
+        except Exception as e:
+            logger.error(f"TAN CITY ERROR: {e}")
+
+            await interaction.edit_original_response(
+                content="Tan City After Dark has suffered a catastrophic production failure."
+            )
+            return
+
+        chunks = split_discord_message(
+            result["text"]
+        )
+
+        await interaction.edit_original_response(
+            content="🎙️ **Tan City After Dark is going live...**"
+        )
+
+        await send_tan_city_episode(
+            interaction.channel_id,
+            chunks
+        )
+
 
     # Summarize availability and remaining capacity for the next active match.
     @bot.tree.command(
