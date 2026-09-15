@@ -316,12 +316,10 @@ def register_commands(
 
             messages = split_discord_message(result["text"])
 
-            await interaction.edit_original_response(
-                content=messages[0]
-            )
+            await interaction.delete_original_response()
 
-            for message in messages[1:]:
-                await interaction.followup.send(message)
+            for message in messages:
+                await interaction.channel.send(message)
 
         except Exception:
             logger.exception("Failed to generate daily CFB statistic.")
@@ -1203,12 +1201,10 @@ def register_commands(
             result["text"]
         )
 
-        await interaction.edit_original_response(
-            content=chunks[0]
-        )
+        await interaction.delete_original_response()
 
-        for chunk in chunks[1:]:
-            await interaction.followup.send(chunk)
+        for chunk in chunks:
+            await interaction.channel.send(chunk)
 
     # Generate an AI-assisted preview for the next match using IN and MAYBE players.
     @bot.tree.command(
@@ -1658,12 +1654,10 @@ def register_commands(
 
             chunks = split_discord_message(preview_text)
 
-            await interaction.edit_original_response(
-                content=chunks[0]
-            )
+            await interaction.delete_original_response()
 
-            for chunk in chunks[1:]:
-                await interaction.followup.send(chunk)
+            for chunk in chunks:
+                await interaction.channel.send(chunk)
 
         except Exception as e:
             logger.error(f"PREVIEW ERROR: {e}")
@@ -2714,12 +2708,10 @@ def register_commands(
 
             chunks = split_discord_message(recap)
 
-            await interaction.edit_original_response(
-                content=chunks[0]
-            )
+            await interaction.delete_original_response()
 
-            for chunk in chunks[1:]:
-                await interaction.followup.send(chunk)
+            for chunk in chunks:
+                await interaction.channel.send(chunk)
 
         except Exception as e:
             logger.error(f"WRAPUP ERROR: {e}")
