@@ -66,74 +66,13 @@ def build_betting_payload(rows):
     }
 
 
-def get_betting_history(mode):
-    connection = get_db_connection()
-    cursor = connection.cursor(dictionary=True)
-
-    try:
-        ## Keeping this if statement in case we want to revert back to our temp table for debugging
-        source = (
-            "vw_betting_history_latest_match"
-            if mode == "pre"
-            else "vw_betting_history_latest_match"
-        )
-
-        cursor.execute(
-            f"""
-            SELECT *
-            FROM {source}
-            ORDER BY gambler_id, wagered_at
-            """
-        )
-
-        return cursor.fetchall()
-
-    finally:
-        cursor.close()
-        connection.close()
-
-
-def get_db_connection():
-    return mysql.connector.connect(
-        connection_timeout=5,
-        host=MYSQL_HOST,
-        port=MYSQL_PORT,
-        database=MYSQL_DATABASE,
-        user=MYSQL_USER,
-        password=MYSQL_PASSWORD,
-    )
-
-
-def get_latest_response(command):
-    connection = get_db_connection()
-    cursor = connection.cursor(dictionary=True)
-
-    try:
-        cursor.execute(
-            """
-            SELECT
-                response_id,
-                match_id,
-                command,
-                response_text,
-                created_at
-            FROM responses
-            WHERE command = %s
-            ORDER BY created_at DESC, response_id DESC
-            LIMIT 1
-            """,
-            (command,),
-        )
-
-        return cursor.fetchone()
-
-    finally:
-        cursor.close()
-        connection.close()
-
-
 async def generate_tan_city(mode):
     rows = get_betting_history(mode)
+
+    if not rows:
+        raise RuntimeError("No betting history found for Tan City.")
+
+    match_id = rows[0]["match_id"]
     payload = build_betting_payload(rows)
     betting_json = json.dumps(
         payload,
@@ -176,12 +115,16 @@ PRE-MATCH SPORTS MARKET DATA
         command = "tancity_pre"
 
     elif mode == "post":
-        prior_response = get_latest_response("tancity_pre")
+        prior_response = get_latest_response(
+            "tancity_pre",
+            match_id=match_id,
+        )
 
-        if prior_response is None:
-            raise RuntimeError(
-                "No stored Tan City pre-match episode found."
-            )
+        prior_response_text = (
+            prior_response["response_text"]
+            if prior_response is not None
+            else "No pre-match episode was recorded for this match."
+        )
 
         prompt = f"""
 You are the host of Tan City After Dark, a late-night comedy podcast sponsored by Tan City Sports King, a sportsbook covering a recreational golf league.
@@ -211,9 +154,9 @@ EXPLANATION OF BALANCES:
     - previous_balance : the gambler's balance when the betting window first opened for this match.
     - cycle_start_balance : ignore this.
 
-Prior to the match, you said:
+Prior to the match you said:
 
-{prior_response["response_text"]}
+{prior_response_text}
 
 POST-MATCH WAGER RESULTS:
 
@@ -233,6 +176,7 @@ POST-MATCH WAGER RESULTS:
     save_response(
         command=command,
         response_text=response.output_text,
+        match_id=match_id,
     )
 
     return {
@@ -242,7 +186,91 @@ POST-MATCH WAGER RESULTS:
     }
 
 
-def save_response(command, response_text):
+def get_betting_history(mode):
+    connection = get_db_connection()
+    cursor = connection.cursor(dictionary=True)
+
+    try:
+        ## Keeping this if statement in case we want to revert back to our temp table for debugging
+        source = (
+            "vw_betting_history_latest_match"
+            if mode == "pre"
+            else "vw_betting_history_latest_match"
+        )
+
+        cursor.execute(
+            f"""
+            SELECT *
+            FROM {source}
+            ORDER BY gambler_id, wagered_at
+            """
+        )
+
+        return cursor.fetchall()
+
+    finally:
+        cursor.close()
+        connection.close()
+
+
+def get_db_connection():
+    return mysql.connector.connect(
+        connection_timeout=5,
+        host=MYSQL_HOST,
+        port=MYSQL_PORT,
+        database=MYSQL_DATABASE,
+        user=MYSQL_USER,
+        password=MYSQL_PASSWORD,
+    )
+
+
+def get_latest_response(command, match_id=None):
+    connection = get_db_connection()
+    cursor = connection.cursor(dictionary=True)
+
+    try:
+        if match_id is None:
+            cursor.execute(
+                """
+                SELECT
+                    response_id,
+                    match_id,
+                    command,
+                    response_text,
+                    created_at
+                FROM responses
+                WHERE command = %s
+                ORDER BY created_at DESC, response_id DESC
+                LIMIT 1
+                """,
+                (command,),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT
+                    response_id,
+                    match_id,
+                    command,
+                    response_text,
+                    created_at
+                FROM responses
+                WHERE command = %s
+                  AND match_id = %s
+                ORDER BY created_at DESC, response_id DESC
+                LIMIT 1
+                """,
+                (command, match_id),
+            )
+
+        return cursor.fetchone()
+
+    finally:
+        cursor.close()
+        connection.close()
+        
+        
+def save_response(command, response_text, match_id=None):
     connection = get_db_connection()
     cursor = connection.cursor()
 
@@ -250,12 +278,14 @@ def save_response(command, response_text):
         cursor.execute(
             """
             INSERT INTO responses (
+                match_id,
                 command,
                 response_text
             )
-            VALUES (%s, %s)
+            VALUES (%s, %s, %s)
             """,
             (
+                match_id,
                 command,
                 response_text,
             ),
