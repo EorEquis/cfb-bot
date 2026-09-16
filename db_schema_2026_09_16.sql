@@ -61,6 +61,8 @@ CREATE TABLE `gamblers` (
   `confidence` tinyint(3) unsigned NOT NULL,
   `bankroll_discipline` tinyint(3) unsigned NOT NULL,
   `starting_balance` decimal(10,2) NOT NULL,
+  `previous_balance` decimal(10,2) DEFAULT NULL,
+  `cycle_start_balance` decimal(10,2) DEFAULT NULL,
   `current_balance` decimal(10,2) NOT NULL,
   `personality` text DEFAULT NULL,
   PRIMARY KEY (`gambler_id`),
@@ -71,6 +73,7 @@ CREATE TABLE `gamblers` (
   CONSTRAINT `chk_bankroll_discipline` CHECK (`bankroll_discipline` between 0 and 100),
   CONSTRAINT `chk_starting_balance` CHECK (`starting_balance` >= 0)
 ) ENGINE=InnoDB AUTO_INCREMENT=501 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
 
 CREATE TABLE `market_prices` (
   `market_price_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
