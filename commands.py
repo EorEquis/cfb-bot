@@ -1923,23 +1923,24 @@ def register_commands(
                     player_name,
                     odds_american,
                     effective_at
-                FROM
-                    (
-                        SELECT
-                            p.player_name,
-                            mp.odds_american,
-                            mp.effective_at,
-                            ROW_NUMBER() OVER (
-                                PARTITION BY p.player_name
-                                ORDER BY mp.effective_at DESC
-                            ) AS rn
-                        FROM market_prices mp
-                        JOIN players p
-                            ON mp.player_id = p.id
-                    ) r
+                FROM (
+                    SELECT
+                        p.player_name,
+                        mp.odds_american,
+                        mp.effective_at,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY p.player_name
+                            ORDER BY mp.effective_at DESC
+                        ) AS rn
+                    FROM market_prices mp
+                    JOIN players p
+                        ON mp.player_id = p.id
+                    WHERE mp.match_id = %s
+                ) r
                 WHERE rn = 1
                 ORDER BY player_name
-                """
+                """,
+                (match_id,)
             )
 
             current_market = cursor.fetchall()
@@ -2008,10 +2009,12 @@ def register_commands(
 
         if latest_wager:
             sportsbook_time = latest_wager.strftime(
-                "%m/%d %I:%M %p"
-            ).lower()
+                "%A, %B %d, %Y %I:%M %p"
+            )
         else:
-            sportsbook_time = "no wagers yet"
+            sportsbook_time = datetime.now().strftime(
+                "%A, %B %d, %Y %I:%M %p"
+    )
 
         lines = [
             f"🎰 **TAN CITY SPORTS BOOK @ {sportsbook_time}**",
