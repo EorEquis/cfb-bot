@@ -1221,6 +1221,13 @@ def register_commands(
             )
             return
 
+        if not bot_admin_only(interaction):
+            await interaction.response.send_message(
+                "You are not authorized to use this command.",
+                ephemeral=True
+            )
+            return
+
         await interaction.response.defer()
 
         usage_id = await asyncio.to_thread(
@@ -1228,13 +1235,6 @@ def register_commands(
             "preview",
             interaction.user.id
         )
-
-        if not bot_admin_only(interaction):
-            await interaction.response.send_message(
-                "You are not authorized to use this command.",
-                ephemeral=True
-            )
-            return
 
         def load_preview_context(cursor):
             cursor.execute(
@@ -1881,14 +1881,14 @@ def register_commands(
             interaction.user.id
         )
 
-        await interaction.response.defer()
-
         if not dev_channel_only(interaction):
             await interaction.response.send_message(
                 "CFB Bot is currently restricted to #cfb-bot-dev.",
                 ephemeral=True
             )
             return
+
+        await interaction.response.defer()
 
         def load_sportsbook(cursor):
             cursor.execute(
@@ -1991,9 +1991,11 @@ def register_commands(
         )
 
         if result is None:
-            await interaction.response.send_message(
-                "🎰 **TAN CITY SPORTSBOOK**\n\n"
-                "No upcoming CFB match found."
+            await interaction.edit_original_response(
+                content=(
+                    "🎰 **TAN CITY SPORTSBOOK**\n\n"
+                    "No upcoming CFB match found."
+                )
             )
             return
 
