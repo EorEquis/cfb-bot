@@ -1920,29 +1920,26 @@ def register_commands(
             cursor.execute(
                 """
                 SELECT
-                    player_name,
-                    odds_american,
-                    effective_at
-                FROM (
-                    SELECT
-                        p.player_name,
-                        mp.odds_american,
-                        mp.effective_at,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY p.player_name
-                            ORDER BY mp.effective_at DESC
-                        ) AS rn
-                    FROM market_prices mp
-                    JOIN players p
-                        ON mp.player_id = p.id
-                    WHERE mp.match_id = %s
-                ) r
-                WHERE rn = 1
-                ORDER BY player_name
+                    p.player_name,
+                    mp.odds_american,
+                    mp.effective_at
+                FROM market_prices mp
+                JOIN players p
+                    ON mp.player_id = p.id
+                WHERE mp.match_id = %s
+                AND mp.effective_at = (
+                    SELECT MAX(effective_at)
+                    FROM market_prices
+                    WHERE match_id = %s
+                )
+                ORDER BY p.player_name
                 """,
-                (match_id,)
+                (
+                    match_id,
+                    match_id
+                )
             )
-
+            
             current_market = cursor.fetchall()
 
             cursor.execute(
