@@ -1267,7 +1267,7 @@ def register_commands(
             match = cursor.fetchone()
 
             if match is None:
-                return None, [], {}, None
+                return None, [], {}, None, {}, None
 
             match_id = match[0]
 
