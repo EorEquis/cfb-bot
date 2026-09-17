@@ -1,3 +1,4 @@
 .env
 cfb-env/
 __pycache__/
+*.wav
