@@ -2137,7 +2137,7 @@ def register_commands(
 
         if (
             mode.value == "pre"
-            and datetime.now().weekday() != 3
+            and datetime.now().weekday() < 3
         ):
             await interaction.response.send_message(
                 "The betting window does not open until Thursday.",
