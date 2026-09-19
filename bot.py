@@ -17,7 +17,7 @@ import discord
 import logging
 import os
 import sys
-from app_log import DatabaseLogHandler
+from infrastructure.app_log import DatabaseLogHandler
 from commands import register_commands
 from discord import app_commands
 from scheduler import db_sync_scheduler, tan_city_scheduler, tan_city_balance_scheduler

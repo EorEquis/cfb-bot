@@ -14,7 +14,7 @@ import mysql.connector
 import os
 
 from bookie import run_bookie
-from db_sync import sync_db
+from infrastructure.db_sync import sync_db
 from discord.ext import tasks
 from gambler import run_gamblers
 from settlement import run_settlement

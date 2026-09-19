@@ -16,7 +16,7 @@ import os
 
 from dailystat import generate_dailystat
 from datetime import datetime
-from db_sync import sync_db
+from infrastructure.db_sync import sync_db
 from discord import app_commands
 from helpers import (
     active_match_autocomplete,
