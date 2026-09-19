@@ -12,7 +12,17 @@ from openai import AsyncOpenAI
 
 client = AsyncOpenAI()
 
-
+def get_active_matches():
+    return execute_query(
+        """
+        SELECT
+            *
+        FROM matches
+        WHERE active = TRUE
+        ORDER BY match_date DESC
+        """
+    )
+    
 def get_last_match():
     rows = execute_query(
         """
