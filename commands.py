@@ -2302,58 +2302,7 @@ def register_commands(
             )
             return
 
-        def load_availability(cursor):
-            cursor.execute(
-                """
-                SELECT
-                    id,
-                    match_date,
-                    tee_time_1,
-                    tee_time_2,
-                    tee_time_3,
-                    tee_time_4
-                FROM matches
-                WHERE active = TRUE
-                AND TIMESTAMP(
-                    match_date,
-                    GREATEST(
-                        COALESCE(tee_time_1, '00:00:00'),
-                        COALESCE(tee_time_2, '00:00:00'),
-                        COALESCE(tee_time_3, '00:00:00'),
-                        COALESCE(tee_time_4, '00:00:00')
-                    )
-                ) >= NOW()
-                ORDER BY match_date
-                LIMIT 1
-                """
-            )
-
-            match = cursor.fetchone()
-
-            if match is None:
-                return None, []
-
-            cursor.execute(
-                """
-                SELECT
-                    p.player_name,
-                    COALESCE(a.status, 'unknown') AS status
-                FROM players p
-                LEFT JOIN availability a
-                    ON a.player_id = p.id
-                   AND a.match_id = %s
-                WHERE p.active = TRUE
-                ORDER BY p.player_name
-                """,
-                (match[0],)
-            )
-
-            return match, cursor.fetchall()
-
-        match, rows = await asyncio.to_thread(
-            database_operation,
-            load_availability
-        )
+        match = await asyncio.to_thread(get_next_match)
 
         if match is None:
             await interaction.response.send_message(
@@ -2361,7 +2310,27 @@ def register_commands(
             )
             return
 
-        match_id, match_date, tee_time_1, tee_time_2, tee_time_3, tee_time_4 = match
+        rows = await asyncio.to_thread(
+            execute_query,
+            """
+            SELECT
+                p.player_name,
+                COALESCE(a.status, 'unknown') AS status
+            FROM players p
+            LEFT JOIN availability a
+                ON a.player_id = p.id
+               AND a.match_id = %s
+            WHERE p.active = TRUE
+            ORDER BY p.player_name
+            """,
+            (match["id"],)
+        )
+
+        match_date = match["match_date"]
+        tee_time_1 = match["tee_time_1"]
+        tee_time_2 = match["tee_time_2"]
+        tee_time_3 = match["tee_time_3"]
+        tee_time_4 = match["tee_time_4"]
 
         capacity = sum(
             tee_time is not None
@@ -2374,8 +2343,8 @@ def register_commands(
         ) * 4
 
         in_count = sum(
-            status == "in"
-            for _, status in rows
+            row["status"] == "in"
+            for row in rows
         )
 
         spots_available = capacity - in_count
@@ -2387,8 +2356,8 @@ def register_commands(
             "unknown": []
         }
 
-        for player_name, status in rows:
-            groups[status].append(player_name)
+        for row in rows:
+            groups[row["status"]].append(row["player_name"])
 
         # Local display helper for rendering empty player groups consistently.
         def format_names(names):
