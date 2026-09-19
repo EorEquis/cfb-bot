@@ -6,10 +6,73 @@
 #           OpenAI model/version: GPT-5.6 Sol
 ###################
 
+from db._db import execute_query
 from openai import AsyncOpenAI
 
 
 client = AsyncOpenAI()
+
+
+def get_last_match():
+    rows = execute_query(
+        """
+        SELECT
+            *
+        FROM matches
+        WHERE active = TRUE
+          AND TIMESTAMP(
+                match_date,
+                GREATEST(
+                    COALESCE(tee_time_1, '00:00:00'),
+                    COALESCE(tee_time_2, '00:00:00'),
+                    COALESCE(tee_time_3, '00:00:00'),
+                    COALESCE(tee_time_4, '00:00:00')
+                )
+              ) < NOW()
+        ORDER BY
+            match_date DESC,
+            GREATEST(
+                COALESCE(tee_time_1, '00:00:00'),
+                COALESCE(tee_time_2, '00:00:00'),
+                COALESCE(tee_time_3, '00:00:00'),
+                COALESCE(tee_time_4, '00:00:00')
+            ) DESC
+        LIMIT 1
+        """
+    )
+
+    return rows[0] if rows else None
+
+
+def get_next_match():
+    rows = execute_query(
+        """
+        SELECT
+            *
+        FROM matches
+        WHERE active = TRUE
+          AND TIMESTAMP(
+                match_date,
+                GREATEST(
+                    COALESCE(tee_time_1, '00:00:00'),
+                    COALESCE(tee_time_2, '00:00:00'),
+                    COALESCE(tee_time_3, '00:00:00'),
+                    COALESCE(tee_time_4, '00:00:00')
+                )
+              ) >= NOW()
+        ORDER BY
+            match_date,
+            GREATEST(
+                COALESCE(tee_time_1, '00:00:00'),
+                COALESCE(tee_time_2, '00:00:00'),
+                COALESCE(tee_time_3, '00:00:00'),
+                COALESCE(tee_time_4, '00:00:00')
+            )
+        LIMIT 1
+        """
+    )
+
+    return rows[0] if rows else None
 
 
 async def generate_match_broadcast(model, prompt):
