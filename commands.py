@@ -16,7 +16,7 @@ import os
 
 from dailystat import generate_dailystat
 from datetime import datetime
-from db._db import execute_query
+from db._db import execute_query, execute_upsert
 from infrastructure.db_sync import sync_db
 from discord import app_commands
 from helpers import (
@@ -170,22 +170,23 @@ def register_commands(
                     )
                     return
 
-        def add_match_record(cursor):
-            cursor.execute(
-                """
-                SELECT id
-                FROM matches
-                WHERE match_date = %s
-                AND active = TRUE
-                LIMIT 1
-                """,
-                (match_date,)
-            )
+        existing_matches = await asyncio.to_thread(
+            execute_query,
+            """
+            SELECT id
+            FROM matches
+            WHERE match_date = %s
+            AND active = TRUE
+            LIMIT 1
+            """,
+            (match_date,)
+        )
 
-            if cursor.fetchone():
-                return False
-
-            cursor.execute(
+        if existing_matches:
+            match_added = False
+        else:
+            await asyncio.to_thread(
+                execute_upsert,
                 """
                 INSERT INTO matches
                     (
@@ -212,13 +213,7 @@ def register_commands(
                 )
             )
 
-            return True
-
-        match_added = await asyncio.to_thread(
-            database_operation,
-            add_match_record,
-            True
-        )
+            match_added = True
 
         if not match_added:
             await interaction.response.send_message(
@@ -255,49 +250,34 @@ def register_commands(
             interaction.user.id
         )
 
-        def load_history(cursor):
-            cursor.execute(
-                """
-                SELECT
-                    match_id,
-                    match_date,
-                    location,
-                    notes,
-                    special_rule,
-                    group_id,
-                    players_in_group,
-                    total_points,
-                    ending_hole,
-                    player_id,
-                    player_name,
-                    player_points,
-                    group_winner,
-                    match_winner,
-                    pre_match_index,
-                    match_performance,
-                    net_handicap_credits
-                FROM vw_completed_match_results
-                ORDER BY
-                    match_date,
-                    match_id,
-                    group_id,
-                    player_name
-                """
-            )
-
-            columns = [
-                column[0]
-                for column in cursor.description
-            ]
-
-            return [
-                dict(zip(columns, row))
-                for row in cursor.fetchall()
-            ]
-
         history_data = await asyncio.to_thread(
-            database_operation,
-            load_history
+            execute_query,
+            """
+            SELECT
+                match_id,
+                match_date,
+                location,
+                notes,
+                special_rule,
+                group_id,
+                players_in_group,
+                total_points,
+                ending_hole,
+                player_id,
+                player_name,
+                player_points,
+                group_winner,
+                match_winner,
+                pre_match_index,
+                match_performance,
+                net_handicap_credits
+            FROM vw_completed_match_results
+            ORDER BY
+                match_date,
+                match_id,
+                group_id,
+                player_name
+            """
         )
 
         if not history_data:
@@ -366,24 +346,23 @@ def register_commands(
             )
             return
 
-        def delete_match_record(cursor):
-            cursor.execute(
-                """
-                SELECT location
-                FROM matches
-                WHERE match_date = %s
-                  AND active = TRUE
-                LIMIT 1
-                """,
-                (match_date,)
-            )
+        matches = await asyncio.to_thread(
+            execute_query,
+            """
+            SELECT location
+            FROM matches
+            WHERE match_date = %s
+              AND active = TRUE
+            LIMIT 1
+            """,
+            (match_date,)
+        )
 
-            match = cursor.fetchone()
+        if matches:
+            location = matches[0]["location"]
 
-            if not match:
-                return None
-
-            cursor.execute(
+            await asyncio.to_thread(
+                execute_upsert,
                 """
                 UPDATE matches
                 SET active = FALSE
@@ -392,14 +371,8 @@ def register_commands(
                 """,
                 (match_date,)
             )
-
-            return match[0]
-
-        location = await asyncio.to_thread(
-            database_operation,
-            delete_match_record,
-            True
-        )
+        else:
+            location = None
 
         if location is None:
             await interaction.response.send_message(
@@ -492,26 +465,18 @@ def register_commands(
                 )
                 return
 
-        def update_match_record(cursor):
-            cursor.execute(
-                f"""
-                UPDATE matches
-                SET {field.value} = %s
-                WHERE match_date = %s
-                  AND active = TRUE
-                """,
-                (
-                    new_value,
-                    match_date
-                )
-            )
-
-            return cursor.rowcount
-
         updated = await asyncio.to_thread(
-            database_operation,
-            update_match_record,
-            True
+            execute_upsert,
+            f"""
+            UPDATE matches
+            SET {field.value} = %s
+            WHERE match_date = %s
+              AND active = TRUE
+            """,
+            (
+                new_value,
+                match_date
+            )
         )
 
         if updated == 0:
@@ -980,47 +945,42 @@ def register_commands(
             interaction.user.id
         )
 
-        def load_player(cursor):
-            cursor.execute(
-                """
-                SELECT
-                    p.player_name,
-                    p.discord_display_name,
-                    s.quote,
-                    s.normalized_cfb_index,
-                    s.matches_played,
-                    s.total_points,
-                    s.group_wins,
-                    s.match_wins,
-                    (
-                        SELECT r.match_performance
-                        FROM vw_completed_match_results r
-                        WHERE r.player_id = p.id
-                        ORDER BY r.match_date DESC, r.match_id DESC
-                        LIMIT 1
-                    ) AS recent_performance
-                FROM players p
-                JOIN vw_player_career_stats s
-                    ON s.player_id = p.id
-                WHERE p.active = TRUE
-                AND (
-                        p.player_name = %s
-                    OR p.discord_display_name = %s
-                )
-                LIMIT 1
-                """,
+        rows = await asyncio.to_thread(
+            execute_query,
+            """
+            SELECT
+                p.player_name,
+                p.discord_display_name,
+                s.quote,
+                s.normalized_cfb_index,
+                s.matches_played,
+                s.total_points,
+                s.group_wins,
+                s.match_wins,
                 (
-                    player,
-                    player
-                )
+                    SELECT r.match_performance
+                    FROM vw_completed_match_results r
+                    WHERE r.player_id = p.id
+                    ORDER BY r.match_date DESC, r.match_id DESC
+                    LIMIT 1
+                ) AS recent_performance
+            FROM players p
+            JOIN vw_player_career_stats s
+                ON s.player_id = p.id
+            WHERE p.active = TRUE
+            AND (
+                    p.player_name = %s
+                OR p.discord_display_name = %s
             )
-
-            return cursor.fetchone()
-
-        row = await asyncio.to_thread(
-            database_operation,
-            load_player
+            LIMIT 1
+            """,
+            (
+                player,
+                player
+            )
         )
+
+        row = rows[0] if rows else None
 
         if row is None:
             await interaction.followup.send(
@@ -1029,17 +989,15 @@ def register_commands(
             )
             return
 
-        (
-            player_name,
-            display_name,
-            quote,
-            current_index,
-            matches_played,
-            total_points,
-            group_wins,
-            match_wins,
-            recent_performance
-        ) = row
+        player_name = row["player_name"]
+        display_name = row["discord_display_name"]
+        quote = row["quote"]
+        current_index = row["normalized_cfb_index"]
+        matches_played = row["matches_played"]
+        total_points = row["total_points"]
+        group_wins = row["group_wins"]
+        match_wins = row["match_wins"]
+        recent_performance = row["recent_performance"]
 
         message = (
             f"🏌️ **CFB PLAYER PROFILE**\n\n"
@@ -1107,94 +1065,78 @@ def register_commands(
             interaction.user.id
         )
 
-        def load_power_data(cursor):
-            cursor.execute(
-                """
-                SELECT
-                    s.player_id,
-                    s.player_name,
-                    s.normalized_cfb_index,
-                    s.matches_played,
-                    s.total_points,
-                    s.group_wins,
-                    s.match_wins
-                FROM vw_player_career_stats s
-                WHERE s.active = TRUE
-                ORDER BY s.player_name
-                """
-            )
-
-            player_rows = cursor.fetchall()
-
-            players = []
-
-            for (
-                player_id,
-                player_name,
-                normalized_cfb_index,
-                matches_played,
-                total_points,
-                group_wins,
-                match_wins
-            ) in player_rows:
-
-                cursor.execute(
-                    """
-                    SELECT match_performance
-                    FROM vw_completed_match_results
-                    WHERE player_id = %s
-                    ORDER BY match_date DESC, match_id DESC
-                    LIMIT 3
-                    """,
-                    (player_id,)
-                )
-
-                recent_performances = [
-                    float(row[0])
-                    for row in cursor.fetchall()
-                ]
-
-                players.append({
-                    "Player": player_name,
-                    "Normalized CFB Index": (
-                        float(normalized_cfb_index)
-                        if normalized_cfb_index is not None
-                        else None
-                    ),
-                    "Matches Played": matches_played,
-                    "Total Points": float(total_points),
-                    "Group Wins": group_wins,
-                    "Match Wins": match_wins,
-                    "Recent Performances": recent_performances
-                })
-
-            cursor.execute(
-                """
-                SELECT player_name
-                FROM vw_completed_match_results
-                WHERE match_winner = 1
-                ORDER BY match_date DESC, match_id DESC
-                LIMIT 1
-                """
-            )
-
-            holder_row = cursor.fetchone()
-
-            current_holder = (
-                holder_row[0]
-                if holder_row is not None
-                else None
-            )
-
-            return {
-                "Players": players,
-                "Current CFB Holder": current_holder
-            }
-
-        power_data = await asyncio.to_thread(
-            database_operation,
-            load_power_data
+        player_rows = await asyncio.to_thread(
+            execute_query,
+            """
+            SELECT
+                s.player_id,
+                s.player_name,
+                s.normalized_cfb_index,
+                s.matches_played,
+                s.total_points,
+                s.group_wins,
+                s.match_wins
+            FROM vw_player_career_stats s
+            WHERE s.active = TRUE
+            ORDER BY s.player_name
+            """
         )
+
+        players = []
+
+        for row in player_rows:
+            recent_rows = await asyncio.to_thread(
+                execute_query,
+                """
+                SELECT match_performance
+                FROM vw_completed_match_results
+                WHERE player_id = %s
+                ORDER BY match_date DESC, match_id DESC
+                LIMIT 3
+                """,
+                (row["player_id"],)
+            )
+
+            recent_performances = [
+                float(recent_row["match_performance"])
+                for recent_row in recent_rows
+            ]
+
+            players.append({
+                "Player": row["player_name"],
+                "Normalized CFB Index": (
+                    float(row["normalized_cfb_index"])
+                    if row["normalized_cfb_index"] is not None
+                    else None
+                ),
+                "Matches Played": row["matches_played"],
+                "Total Points": float(row["total_points"]),
+                "Group Wins": row["group_wins"],
+                "Match Wins": row["match_wins"],
+                "Recent Performances": recent_performances
+            })
+
+        holder_rows = await asyncio.to_thread(
+            execute_query,
+            """
+            SELECT player_name
+            FROM vw_completed_match_results
+            WHERE match_winner = 1
+            ORDER BY match_date DESC, match_id DESC
+            LIMIT 1
+            """
+        )
+
+        current_holder = (
+            holder_rows[0]["player_name"]
+            if holder_rows
+            else None
+        )
+
+        power_data = {
+            "Players": players,
+            "Current CFB Holder": current_holder
+        }
 
         try:
             await asyncio.to_thread(
@@ -1791,26 +1733,18 @@ def register_commands(
             )
             return
 
-        def update_quote(cursor):
-            cursor.execute(
-                """
-                UPDATE players
-                SET quote = %s
-                WHERE discord_user_id = %s
-                AND active = TRUE
-                """,
-                (
-                    quote,
-                    interaction.user.id
-                )
-            )
-
-            return cursor.rowcount
-
         updated = await asyncio.to_thread(
-            database_operation,
-            update_quote,
-            True
+            execute_upsert,
+            """
+            UPDATE players
+            SET quote = %s
+            WHERE discord_user_id = %s
+            AND active = TRUE
+            """,
+            (
+                quote,
+                interaction.user.id
+            )
         )
 
         if updated == 0:
@@ -1855,28 +1789,24 @@ def register_commands(
             interaction.user.id
         )
 
-        def load_linked_players(cursor):
-            cursor.execute(
-                """
-                SELECT id, discord_user_id
-                FROM players
-                WHERE discord_user_id IS NOT NULL
-                  AND active = TRUE
-                """
-            )
-
-            return cursor.fetchall()
-
         players = await asyncio.to_thread(
-            database_operation,
-            load_linked_players
+            execute_query,
+            """
+            SELECT id, discord_user_id
+            FROM players
+            WHERE discord_user_id IS NOT NULL
+              AND active = TRUE
+            """
         )
 
         updated = 0
         not_found = 0
         name_updates = []
 
-        for player_id, discord_user_id in players:
+        for player in players:
+            player_id = player["id"]
+            discord_user_id = player["discord_user_id"]
+
             try:
                 member = await interaction.guild.fetch_member(
                     discord_user_id
@@ -1895,22 +1825,16 @@ def register_commands(
 
             updated += 1
 
-        def update_player_names(cursor):
-            cursor.executemany(
+        for name_update in name_updates:
+            await asyncio.to_thread(
+                execute_upsert,
                 """
                 UPDATE players
                 SET discord_username = %s,
                     discord_display_name = %s
                 WHERE id = %s
                 """,
-                name_updates
-            )
-
-        if name_updates:
-            await asyncio.to_thread(
-                database_operation,
-                update_player_names,
-                True
+                name_update
             )
 
         await interaction.followup.send(
