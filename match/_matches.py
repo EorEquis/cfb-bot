@@ -27,26 +27,17 @@ def get_last_match():
     rows = execute_query(
         """
         SELECT
-            *
-        FROM matches
-        WHERE active = TRUE
-          AND TIMESTAMP(
-                match_date,
-                GREATEST(
-                    COALESCE(tee_time_1, '00:00:00'),
-                    COALESCE(tee_time_2, '00:00:00'),
-                    COALESCE(tee_time_3, '00:00:00'),
-                    COALESCE(tee_time_4, '00:00:00')
-                )
-              ) < NOW()
+            m.*
+        FROM matches m
+        WHERE m.active = TRUE
+          AND EXISTS (
+                SELECT 1
+                FROM vw_completed_match_results cmr
+                WHERE cmr.match_id = m.match_id
+              )
         ORDER BY
-            match_date DESC,
-            GREATEST(
-                COALESCE(tee_time_1, '00:00:00'),
-                COALESCE(tee_time_2, '00:00:00'),
-                COALESCE(tee_time_3, '00:00:00'),
-                COALESCE(tee_time_4, '00:00:00')
-            ) DESC
+            m.match_date DESC,
+            m.match_id DESC
         LIMIT 1
         """
     )
