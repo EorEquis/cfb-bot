@@ -12,6 +12,7 @@ import asyncio
 import discord
 import logging
 import mysql.connector
+import os
 
 from dailystat import generate_dailystat
 from datetime import datetime
@@ -54,7 +55,8 @@ def register_commands(
     mysql_port,
     mysql_database,
     mysql_user,
-    mysql_password
+    mysql_password,
+    tts_output_dir
 ):
 
     # Supply shared helper configuration once before registering commands.
@@ -1663,7 +1665,147 @@ def register_commands(
                 "a catastrophic production failure."
             )
             
-            
+
+    # Publish a staged preview from the database with its generated audio file.
+    @bot.tree.command(
+        name="preview-dbtest",
+        description="Test publishing a staged CFB Sports Network preview",
+        guild=dev_guild
+    )
+    @admin_only
+    async def preview_dbtest(interaction: discord.Interaction):
+        if not dev_channel_only(interaction):
+            await interaction.response.send_message(
+                "CFB Bot is currently restricted to #cfb-bot-dev.",
+                ephemeral=True
+            )
+            return
+
+        if not bot_admin_only(interaction):
+            await interaction.response.send_message(
+                "You are not authorized to use this command.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer()
+
+        await asyncio.to_thread(
+            log_bot_usage,
+            "preview-dbtest",
+            interaction.user.id
+        )
+
+        def load_staged_preview(cursor):
+            cursor.execute(
+                """
+                SELECT id
+                FROM matches
+                WHERE active = TRUE
+                AND TIMESTAMP(
+                    match_date,
+                    GREATEST(
+                        COALESCE(tee_time_1, '00:00:00'),
+                        COALESCE(tee_time_2, '00:00:00'),
+                        COALESCE(tee_time_3, '00:00:00'),
+                        COALESCE(tee_time_4, '00:00:00')
+                    )
+                ) >= NOW()
+                ORDER BY match_date
+                LIMIT 1
+                """
+            )
+
+            match = cursor.fetchone()
+
+            if match is None:
+                return None, None
+
+            match_id = match[0]
+
+            cursor.execute(
+                """
+                SELECT
+                    r.response_id,
+                    r.response_text,
+                    m.match_date
+                FROM responses r
+                JOIN matches m
+                    ON m.id = r.match_id
+                WHERE r.match_id = %s
+                AND r.command = 'preview'
+                ORDER BY r.response_id DESC
+                LIMIT 1
+                """,
+                (match_id,)
+            )
+
+            return match_id, cursor.fetchone()
+
+        match_id, response = await asyncio.to_thread(
+            database_operation,
+            load_staged_preview
+        )
+
+        if match_id is None:
+            await interaction.edit_original_response(
+                content="There are no upcoming CFB matches scheduled."
+            )
+            return
+
+        if response is None:
+            await interaction.edit_original_response(
+                content=(
+                    "No staged preview was found for the next CFB match."
+                )
+            )
+            return
+
+        response_id, response_text, match_date = response
+
+        audio_filename = (
+            f"preview_{match_date:%Y%m%d}_{response_id}.mp3"
+        )
+
+        audio_path = os.path.join(
+            tts_output_dir,
+            audio_filename
+        )
+
+        if not os.path.isfile(audio_path):
+            await interaction.edit_original_response(
+                content=(
+                    f"Staged preview response {response_id} was found, "
+                    "but {audio_filename} file is missing."
+                )
+            )
+            return
+
+        chunks = split_discord_message(response_text)
+
+        await interaction.delete_original_response()
+
+        print(
+            f"preview-dbtest: response_id={response_id}, "
+            f"audio_path={audio_path}, "
+            f"exists={os.path.isfile(audio_path)}, "
+            f"chunks={len(chunks)}"
+        )
+
+        for index, chunk in enumerate(chunks):
+            print(
+                f"preview-dbtest: sending chunk {index + 1}/{len(chunks)}, "
+                f"attach={index == len(chunks) - 1}"
+            )
+            if index == len(chunks) - 1:
+                await interaction.channel.send(
+                    chunk,
+                    file=discord.File(audio_path)
+                )
+            else:
+                await interaction.channel.send(chunk)
+                
+                            
     # Save the invoking player's favorite quote after basic validation.
     @bot.tree.command(
         name="quote",

@@ -2,3 +2,5 @@
 cfb-env/
 __pycache__/
 *.wav
+.vscode/
+*.mp3
