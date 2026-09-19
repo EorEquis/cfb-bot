@@ -32,7 +32,10 @@ from helpers import (
     split_discord_message,
     update_bot_usage_tokens
 )
-from match._matches import get_next_match
+from match._matches import (
+    get_active_matches,
+    get_next_match
+)
 from match.preview import generate_preview
 from power import generate_power
 from tancity import generate_tan_city
@@ -698,45 +701,64 @@ def register_commands(
 
         show_all = show is not None and show.value == "all"
 
-        def load_matches(cursor):
-            cursor.execute(
-                f"""
-                SELECT
-                    match_date,
-                    location,
-                    tee_time_1,
-                    tee_time_2,
-                    tee_time_3,
-                    tee_time_4,
-                    notes,
-                    special_rule
-                FROM matches
-                WHERE active = TRUE
-                AND TIMESTAMP(
-                    match_date,
-                    GREATEST(
-                        COALESCE(tee_time_1, '00:00:00'),
-                        COALESCE(tee_time_2, '00:00:00'),
-                        COALESCE(tee_time_3, '00:00:00'),
-                        COALESCE(tee_time_4, '00:00:00')
-                    )
-                ) >= NOW()
-                ORDER BY match_date
-                {"" if show_all else "LIMIT 1"}
-                """
+        if show_all:
+            active_matches = await asyncio.to_thread(
+                get_active_matches
             )
 
-            if show_all:
-                return cursor.fetchall()
+            now = datetime.now()
 
-            match_row = cursor.fetchone()
-            return [match_row] if match_row else []
+            matches = []
 
-        matches = await asyncio.to_thread(
-            database_operation,
-            load_matches
-        )
+            for active_match in active_matches:
+                tee_times = [
+                    active_match["tee_time_1"],
+                    active_match["tee_time_2"],
+                    active_match["tee_time_3"],
+                    active_match["tee_time_4"]
+                ]
 
+                tee_times = [
+                    tee_time
+                    for tee_time in tee_times
+                    if tee_time is not None
+                ]
+
+                latest_tee_time = (
+                    max(tee_times)
+                    if tee_times
+                    else None
+                )
+
+                if latest_tee_time is None:
+                    continue
+
+                match_datetime = datetime.combine(
+                    active_match["match_date"],
+                    (
+                        datetime.min
+                        + latest_tee_time
+                    ).time()
+                )
+
+                if match_datetime >= now:
+                    matches.append(active_match)
+
+            matches.sort(
+                key=lambda match: match["match_date"]
+            )
+
+        else:
+            next_match = await asyncio.to_thread(
+                get_next_match
+            )
+
+            matches = (
+                [next_match]
+                if next_match is not None
+                else []
+            )
+            
         if not matches:
             await interaction.followup.send(
                 "There are no upcoming CFB matches scheduled."
@@ -768,22 +790,17 @@ def register_commands(
 
         blocks = []
 
-        for (
-            match_date,
-            location,
-            tee_time_1,
-            tee_time_2,
-            tee_time_3,
-            tee_time_4,
-            notes,
-            special_rule
-        ) in matches:
+        for match_data in matches:
+            match_date = match_data["match_date"]
+            location = match_data["location"]
+            notes = match_data["notes"]
+            special_rule = match_data["special_rule"]
 
             tee_times = [
-                tee_time_1,
-                tee_time_2,
-                tee_time_3,
-                tee_time_4
+                match_data["tee_time_1"],
+                match_data["tee_time_2"],
+                match_data["tee_time_3"],
+                match_data["tee_time_4"]
             ]
 
             tee_times = [
@@ -829,7 +846,8 @@ def register_commands(
         )
 
         if not show_all:
-            match_date, location, tee_time_1, _, _, _, _, _ = matches[0]
+            match_date = matches[0]["match_date"]
+            tee_time_1 = matches[0]["tee_time_1"]
 
             if tee_time_1 is not None:
                 try:
