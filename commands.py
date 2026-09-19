@@ -1258,288 +1258,7 @@ def register_commands(
             interaction.user.id
         )
 
-        def load_preview_context(cursor):
-            cursor.execute(
-                """
-                SELECT
-                    m.id,
-                    m.match_date,
-                    m.location,
-                    m.tee_time_1,
-                    m.tee_time_2,
-                    m.tee_time_3,
-                    m.tee_time_4,
-                    m.special_rule
-                FROM matches m
-                WHERE m.active = TRUE
-                AND TIMESTAMP(
-                    m.match_date,
-                    GREATEST(
-                        COALESCE(m.tee_time_1, '00:00:00'),
-                        COALESCE(m.tee_time_2, '00:00:00'),
-                        COALESCE(m.tee_time_3, '00:00:00'),
-                        COALESCE(m.tee_time_4, '00:00:00')
-                    )
-                ) >= NOW()
-                ORDER BY m.match_date
-                LIMIT 1
-                """
-            )
-
-            match = cursor.fetchone()
-
-            if match is None:
-                return None, [], {}, None, {}, None
-
-            match_id = match[0]
-
-            cursor.execute(
-                """
-                SELECT
-                    p.player_name,
-                    CASE
-                        WHEN a.status = 'in' THEN 'in'
-                        WHEN a.status = 'maybe' THEN 'maybe'
-                        ELSE 'unknown'
-                    END AS status
-                FROM players p
-                LEFT JOIN availability a
-                    ON a.player_id = p.id
-                    AND a.match_id = %s
-                WHERE p.active = TRUE
-                AND (
-                    a.status IN ('in', 'maybe')
-                    OR a.status IS NULL
-                )
-                ORDER BY
-                    CASE
-                        WHEN a.status = 'in' THEN 1
-                        WHEN a.status = 'maybe' THEN 2
-                        ELSE 3
-                    END,
-                    p.player_name
-                """,
-                (match_id,)
-            )
-
-            player_availability = cursor.fetchall()
-            player_names = [row[0] for row in player_availability]
-
-            player_notes = {}
-
-            if player_names:
-                cursor.execute(
-                    """
-                    SELECT
-                        player_name,
-                        notes
-                    FROM players
-                    WHERE active = TRUE
-                    AND player_name IN ({})
-                    AND notes IS NOT NULL
-                    AND TRIM(notes) <> ''
-                    """.format(
-                        ",".join(["%s"] * len(player_names))
-                    ),
-                    tuple(player_names)
-                )
-
-                player_notes = {
-                    player_name: notes
-                    for player_name, notes in cursor.fetchall()
-                }
-
-            # Load David's Tan City bankroll.
-            cursor.execute(
-                """
-                SELECT
-                    gambler_id,
-                    starting_balance,
-                    current_balance
-                FROM gamblers
-                WHERE is_david = TRUE
-                LIMIT 1
-                """
-            )
-
-            david = cursor.fetchone()
-            david_gambling = None
-
-            if david is not None:
-                david_gambler_id, starting_balance, current_balance = david
-
-                # Load the latest sportsbook market snapshot.
-                cursor.execute(
-                    """
-                    SELECT
-                        p.player_name,
-                        mp.odds_american
-                    FROM market_prices mp
-                    JOIN players p
-                        ON mp.player_id = p.id
-                    WHERE mp.match_id = %s
-                    AND mp.effective_at = (
-                        SELECT MAX(effective_at)
-                        FROM market_prices
-                        WHERE match_id = %s
-                    )
-                    ORDER BY p.player_name
-                    """,
-                    (
-                        match_id,
-                        match_id
-                    )
-                )
-
-                market = [
-                    {
-                        "Player": player_name,
-                        "Current Odds": odds_american,
-                        "David Wagers": []
-                    }
-                    for player_name, odds_american
-                    in cursor.fetchall()
-                ]
-
-                market_by_player = {
-                    entry["Player"]: entry
-                    for entry in market
-                }
-
-                # Attach David's unsettled wagers to the player he wagered on.
-                cursor.execute(
-                    """
-                    SELECT
-                        p.player_name,
-                        mp.odds_american,
-                        w.wager_amount
-                    FROM wagers w
-                    JOIN market_prices mp
-                        ON mp.market_price_id = w.market_price_id
-                    JOIN players p
-                        ON p.id = mp.player_id
-                    WHERE w.gambler_id = %s
-                    AND mp.match_id = %s
-                    AND w.outcome IS NULL
-                    ORDER BY
-                        w.wagered_at,
-                        w.wager_id
-                    """,
-                    (
-                        david_gambler_id,
-                        match_id
-                    )
-                )
-
-                david_wagers = []
-
-                for player_name, odds_american, wager_amount in cursor.fetchall():
-                    wager = {
-                        "Odds": odds_american,
-                        "Wager Amount": float(wager_amount)
-                    }
-
-                    david_wagers.append(wager)
-
-                    if player_name in market_by_player:
-                        market_by_player[player_name]["David Wagers"].append(
-                            wager
-                        )
-
-                if market:
-                    david_gambling = {
-                        "Starting Bankroll": float(starting_balance),
-                        "Current Bankroll": float(current_balance),
-                        "Total Wagered On Match": sum(
-                            wager["Wager Amount"]
-                            for wager in david_wagers
-                        ),
-                        "Sportsbook Market": market
-                    }
-
-            # Load completed-match history for players in the upcoming field.
-            player_history = {}
-
-            if player_names:
-                cursor.execute(
-                    """
-                    SELECT
-                        player_name,
-                        match_id,
-                        match_date,
-                        player_points,
-                        match_performance,
-                        group_winner,
-                        match_winner
-                    FROM vw_completed_match_results
-                    WHERE player_name IN ({})
-                    ORDER BY match_date, match_id
-                    """.format(
-                        ",".join(["%s"] * len(player_names))
-                    ),
-                    tuple(player_names)
-                )
-
-                for (
-                    player_name,
-                    history_match_id,
-                    history_match_date,
-                    player_points,
-                    match_performance,
-                    group_winner,
-                    match_winner
-                ) in cursor.fetchall():
-
-                    player_history.setdefault(
-                        player_name,
-                        []
-                    ).append({
-                        "Match ID": history_match_id,
-                        "Match Date": str(history_match_date),
-                        "Points": player_points,
-                        "Match Performance": float(match_performance),
-                        "Group Winner": bool(group_winner),
-                        "Match Winner": bool(match_winner)
-                    })
-
-            cursor.execute(
-                """
-                SELECT player_name
-                FROM vw_completed_match_results
-                WHERE match_winner = 1
-                ORDER BY match_date DESC, match_id DESC
-                LIMIT 1
-                """
-            )
-
-            holder_row = cursor.fetchone()
-
-            current_holder = (
-                holder_row[0]
-                if holder_row is not None
-                else None
-            )
-            
-            return (
-                match,
-                player_availability,
-                player_notes,
-                david_gambling,
-                player_history,
-                current_holder
-            )
-
-        (
-            match,
-            player_availability,
-            player_notes,
-            david_gambling,
-            player_history,
-            current_holder
-        ) = await asyncio.to_thread(
-            database_operation,
-            load_preview_context
-        )
+        match = await asyncio.to_thread(get_next_match)
 
         if match is None:
             await interaction.edit_original_response(
@@ -1547,16 +1266,243 @@ def register_commands(
             )
             return
 
-        (
-            match_id,
-            match_date,
-            location,
-            tee_time_1,
-            tee_time_2,
-            tee_time_3,
-            tee_time_4,
-            special_rule
-        ) = match
+        match_id = match["id"]
+
+        player_availability = await asyncio.to_thread(
+            execute_query,
+            """
+            SELECT
+                p.player_name,
+                CASE
+                    WHEN a.status = 'in' THEN 'in'
+                    WHEN a.status = 'maybe' THEN 'maybe'
+                    ELSE 'unknown'
+                END AS status
+            FROM players p
+            LEFT JOIN availability a
+                ON a.player_id = p.id
+                AND a.match_id = %s
+            WHERE p.active = TRUE
+            AND (
+                a.status IN ('in', 'maybe')
+                OR a.status IS NULL
+            )
+            ORDER BY
+                CASE
+                    WHEN a.status = 'in' THEN 1
+                    WHEN a.status = 'maybe' THEN 2
+                    ELSE 3
+                END,
+                p.player_name
+            """,
+            (match_id,)
+        )
+
+        player_names = [
+            row["player_name"]
+            for row in player_availability
+        ]
+
+        player_notes = {}
+
+        if player_names:
+            player_note_rows = await asyncio.to_thread(
+                execute_query,
+                """
+                SELECT
+                    player_name,
+                    notes
+                FROM players
+                WHERE active = TRUE
+                AND player_name IN ({})
+                AND notes IS NOT NULL
+                AND TRIM(notes) <> ''
+                """.format(
+                    ",".join(["%s"] * len(player_names))
+                ),
+                tuple(player_names)
+            )
+
+            player_notes = {
+                row["player_name"]: row["notes"]
+                for row in player_note_rows
+            }
+
+        # Load David's Tan City bankroll.
+        david_rows = await asyncio.to_thread(
+            execute_query,
+            """
+            SELECT
+                gambler_id,
+                starting_balance,
+                current_balance
+            FROM gamblers
+            WHERE is_david = TRUE
+            LIMIT 1
+            """
+        )
+
+        david = david_rows[0] if david_rows else None
+        david_gambling = None
+
+        if david is not None:
+            david_gambler_id = david["gambler_id"]
+            starting_balance = david["starting_balance"]
+            current_balance = david["current_balance"]
+
+            # Load the latest sportsbook market snapshot.
+            market_rows = await asyncio.to_thread(
+                execute_query,
+                """
+                SELECT
+                    p.player_name,
+                    mp.odds_american
+                FROM market_prices mp
+                JOIN players p
+                    ON mp.player_id = p.id
+                WHERE mp.match_id = %s
+                AND mp.effective_at = (
+                    SELECT MAX(effective_at)
+                    FROM market_prices
+                    WHERE match_id = %s
+                )
+                ORDER BY p.player_name
+                """,
+                (
+                    match_id,
+                    match_id
+                )
+            )
+
+            market = [
+                {
+                    "Player": row["player_name"],
+                    "Current Odds": row["odds_american"],
+                    "David Wagers": []
+                }
+                for row in market_rows
+            ]
+
+            market_by_player = {
+                entry["Player"]: entry
+                for entry in market
+            }
+
+            # Attach David's unsettled wagers to the player he wagered on.
+            david_wager_rows = await asyncio.to_thread(
+                execute_query,
+                """
+                SELECT
+                    p.player_name,
+                    mp.odds_american,
+                    w.wager_amount
+                FROM wagers w
+                JOIN market_prices mp
+                    ON mp.market_price_id = w.market_price_id
+                JOIN players p
+                    ON p.id = mp.player_id
+                WHERE w.gambler_id = %s
+                AND mp.match_id = %s
+                AND w.outcome IS NULL
+                ORDER BY
+                    w.wagered_at,
+                    w.wager_id
+                """,
+                (
+                    david_gambler_id,
+                    match_id
+                )
+            )
+
+            david_wagers = []
+
+            for row in david_wager_rows:
+                wager = {
+                    "Odds": row["odds_american"],
+                    "Wager Amount": float(row["wager_amount"])
+                }
+
+                david_wagers.append(wager)
+
+                if row["player_name"] in market_by_player:
+                    market_by_player[
+                        row["player_name"]
+                    ]["David Wagers"].append(wager)
+
+            if market:
+                david_gambling = {
+                    "Starting Bankroll": float(starting_balance),
+                    "Current Bankroll": float(current_balance),
+                    "Total Wagered On Match": sum(
+                        wager["Wager Amount"]
+                        for wager in david_wagers
+                    ),
+                    "Sportsbook Market": market
+                }
+
+        # Load completed-match history for players in the upcoming field.
+        player_history = {}
+
+        if player_names:
+            history_rows = await asyncio.to_thread(
+                execute_query,
+                """
+                SELECT
+                    player_name,
+                    match_id,
+                    match_date,
+                    player_points,
+                    match_performance,
+                    group_winner,
+                    match_winner
+                FROM vw_completed_match_results
+                WHERE player_name IN ({})
+                ORDER BY match_date, match_id
+                """.format(
+                    ",".join(["%s"] * len(player_names))
+                ),
+                tuple(player_names)
+            )
+
+            for row in history_rows:
+                player_history.setdefault(
+                    row["player_name"],
+                    []
+                ).append({
+                    "Match ID": row["match_id"],
+                    "Match Date": str(row["match_date"]),
+                    "Points": row["player_points"],
+                    "Match Performance": float(
+                        row["match_performance"]
+                    ),
+                    "Group Winner": bool(row["group_winner"]),
+                    "Match Winner": bool(row["match_winner"])
+                })
+
+        holder_rows = await asyncio.to_thread(
+            execute_query,
+            """
+            SELECT player_name
+            FROM vw_completed_match_results
+            WHERE match_winner = 1
+            ORDER BY match_date DESC, match_id DESC
+            LIMIT 1
+            """
+        )
+
+        current_holder = (
+            holder_rows[0]["player_name"]
+            if holder_rows
+            else None
+        )
+
+        match_date = match["match_date"]
+        location = match["location"]
+        tee_time_1 = match["tee_time_1"]
+        tee_time_2 = match["tee_time_2"]
+        tee_time_3 = match["tee_time_3"]
+        tee_time_4 = match["tee_time_4"]
+        special_rule = match["special_rule"]
 
         tee_times = [
             tee_time
@@ -1605,7 +1551,9 @@ def register_commands(
 
             preview_players = []
 
-            for name, status in player_availability:
+            for row in player_availability:
+                name = row["player_name"]
+                status = row["status"]
                 history = player_history.get(name, [])
 
                 preview_players.append({
@@ -1626,16 +1574,16 @@ def register_commands(
                 "Maximum Groups": len(formatted_tee_times),
                 "Maximum Players": len(formatted_tee_times) * 4,
                 "Players IN": sum(
-                    status == "in"
-                    for _, status in player_availability
+                    row["status"] == "in"
+                    for row in player_availability
                 ),
                 "Players MAYBE": sum(
-                    status == "maybe"
-                    for _, status in player_availability
+                    row["status"] == "maybe"
+                    for row in player_availability
                 ),
                 "Players UNKNOWN": sum(
-                    status == "unknown"
-                    for _, status in player_availability
+                    row["status"] == "unknown"
+                    for row in player_availability
                 ),
                 "Field Status": (
                     "Players marked IN are the current field. "
