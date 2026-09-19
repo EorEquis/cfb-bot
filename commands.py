@@ -2005,104 +2005,9 @@ def register_commands(
 
         await interaction.response.defer()
 
-        def load_sportsbook(cursor):
-            cursor.execute(
-                """
-                SELECT id
-                FROM matches
-                WHERE active = TRUE
-                AND TIMESTAMP(
-                    match_date,
-                    GREATEST(
-                        COALESCE(tee_time_1, '00:00:00'),
-                        COALESCE(tee_time_2, '00:00:00'),
-                        COALESCE(tee_time_3, '00:00:00'),
-                        COALESCE(tee_time_4, '00:00:00')
-                    )
-                ) >= NOW()
-                ORDER BY match_date
-                LIMIT 1
-                """
-            )
+        match = await asyncio.to_thread(get_next_match)
 
-            match = cursor.fetchone()
-
-            if not match:
-                return None
-
-            match_id = match[0]
-
-            cursor.execute(
-                """
-                SELECT
-                    p.player_name,
-                    mp.odds_american,
-                    mp.effective_at
-                FROM market_prices mp
-                JOIN players p
-                    ON mp.player_id = p.id
-                WHERE mp.match_id = %s
-                AND mp.effective_at = (
-                    SELECT MAX(effective_at)
-                    FROM market_prices
-                    WHERE match_id = %s
-                )
-                ORDER BY p.player_name
-                """,
-                (
-                    match_id,
-                    match_id
-                )
-            )
-            
-            current_market = cursor.fetchall()
-
-            cursor.execute(
-                """
-                SELECT
-                    p.player_name,
-                    SUM(w.wager_amount) AS total_wagered,
-                    mp.odds_american
-                FROM wagers w
-                JOIN market_prices mp
-                    ON w.market_price_id = mp.market_price_id
-                JOIN players p
-                    ON mp.player_id = p.id
-                WHERE mp.match_id = %s
-                GROUP BY
-                    p.player_name,
-                    mp.odds_american
-                ORDER BY
-                    p.player_name,
-                    total_wagered DESC,
-                    CAST(mp.odds_american AS INTEGER) DESC
-                """,
-                (match_id,)
-            )
-
-            wagers = cursor.fetchall()
-
-            cursor.execute(
-                """
-                SELECT MAX(w.wagered_at)
-                FROM wagers w
-                JOIN market_prices mp
-                    ON w.market_price_id = mp.market_price_id
-                WHERE mp.match_id = %s
-                """,
-                (match_id,)
-            )
-
-            latest_wager = cursor.fetchone()[0]
-
-            return current_market, wagers, latest_wager
-
-        result = await asyncio.to_thread(
-            database_operation,
-            load_sportsbook
-        )
-
-        if result is None:
+        if match is None:
             await interaction.edit_original_response(
                 content=(
                     "🎰 **TAN CITY SPORTSBOOK**\n\n"
@@ -2111,7 +2016,69 @@ def register_commands(
             )
             return
 
-        current_market, wagers, latest_wager = result
+        match_id = match["id"]
+
+        current_market = await asyncio.to_thread(
+            execute_query,
+            """
+            SELECT
+                p.player_name,
+                mp.odds_american,
+                mp.effective_at
+            FROM market_prices mp
+            JOIN players p
+                ON mp.player_id = p.id
+            WHERE mp.match_id = %s
+            AND mp.effective_at = (
+                SELECT MAX(effective_at)
+                FROM market_prices
+                WHERE match_id = %s
+            )
+            ORDER BY p.player_name
+            """,
+            (
+                match_id,
+                match_id
+            )
+        )
+
+        wagers = await asyncio.to_thread(
+            execute_query,
+            """
+            SELECT
+                p.player_name,
+                SUM(w.wager_amount) AS total_wagered,
+                mp.odds_american
+            FROM wagers w
+            JOIN market_prices mp
+                ON w.market_price_id = mp.market_price_id
+            JOIN players p
+                ON mp.player_id = p.id
+            WHERE mp.match_id = %s
+            GROUP BY
+                p.player_name,
+                mp.odds_american
+            ORDER BY
+                p.player_name,
+                total_wagered DESC,
+                CAST(mp.odds_american AS INTEGER) DESC
+            """,
+            (match_id,)
+        )
+
+        latest_wager_rows = await asyncio.to_thread(
+            execute_query,
+            """
+            SELECT MAX(w.wagered_at) AS latest_wager
+            FROM wagers w
+            JOIN market_prices mp
+                ON w.market_price_id = mp.market_price_id
+            WHERE mp.match_id = %s
+            """,
+            (match_id,)
+        )
+
+        latest_wager = latest_wager_rows[0]["latest_wager"]
 
         def format_odds(odds):
             odds = int(odds)
@@ -2137,9 +2104,10 @@ def register_commands(
         ]
 
         if current_market:
-            for player_name, odds_american, effective_at in current_market:
+            for market in current_market:
                 lines.append(
-                    f"**{player_name}** — {format_odds(odds_american)}"
+                    f"**{market['player_name']}** — "
+                    f"{format_odds(market['odds_american'])}"
                 )
         else:
             lines.append("No current market.")
@@ -2152,7 +2120,9 @@ def register_commands(
         if wagers:
             current_player = None
 
-            for player_name, total_wagered, odds_american in wagers:
+            for wager in wagers:
+                player_name = wager["player_name"]
+
                 if player_name != current_player:
                     if current_player is not None:
                         lines.append("")
@@ -2161,7 +2131,8 @@ def register_commands(
                     current_player = player_name
 
                 lines.append(
-                    f"• ${total_wagered:,.2f} @ {format_odds(odds_american)}"
+                    f"• ${wager['total_wagered']:,.2f} @ "
+                    f"{format_odds(wager['odds_american'])}"
                 )
         else:
             lines.append("No wagers yet.")
