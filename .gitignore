@@ -2,3 +2,4 @@
 cfb-env/
 __pycache__/
 *.wav
+settings.json
