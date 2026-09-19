@@ -11,12 +11,8 @@
 import os
 
 from datetime import datetime
-from openai import AsyncOpenAI
+from match._matches import generate_match_broadcast
 
-
-
-# Create the shared asynchronous OpenAI client used for preview requests.
-client = AsyncOpenAI()
 
 MODEL = os.getenv("PREVIEW_MODEL", "gpt-5.6-luna")
 
@@ -48,15 +44,5 @@ End EXACTLY with:
 *We crunch the numbers so you don't have to understand what the fuck they're doing.*
 """
 
-    # Submit the completed prompt and wait asynchronously for the model response.
-    response = await client.responses.create(
-        model=MODEL,
-        input=prompt
-    )
-
-    # Return both the generated preview and token counts used for bot logging.
-    return {
-        "text": response.output_text,
-        "input_tokens": response.usage.input_tokens,
-        "output_tokens": response.usage.output_tokens
-    }
+    # Generate the preview using the shared match broadcast machinery.
+    return await generate_match_broadcast(MODEL, prompt)
