@@ -442,7 +442,7 @@ This arrangement has proven remarkably effective.
 - One hundred synthetic gamblers can now form strong opinions about two guys playing weekend golf.
 - David FehertAI has access to a bankroll despite substantial evidence that he should not.
 - OpenAI’s AI support bot may instruct you to ask an AI how to deal with the AI support bot, creating a feedback loop so perfectly Douglas Adams that someone should check whether the answer is 42.
-
+- Chatterbox TTS has produced square pigs, caused bears, and, at sufficiently reckless character counts, a priest screwing off grenading the current market, and a summoning of a dark spirit. The relationship between geometry, ursine causality, violent clergy, financial uncertainty, and demonic possession remains under investigation. Habemus volatility.
 ---
 
 ## Roadmap
