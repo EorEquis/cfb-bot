@@ -20,7 +20,7 @@ import sys
 from infrastructure.app_log import DatabaseLogHandler
 from commands import register_commands
 from discord import app_commands
-from scheduler import db_sync_scheduler, tan_city_scheduler, tan_city_balance_scheduler
+from infrastructure.scheduler import db_sync_scheduler, tan_city_scheduler, tan_city_balance_scheduler
 
 
 # Create a standard Python logger for this module.
