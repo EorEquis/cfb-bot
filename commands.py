@@ -32,7 +32,7 @@ from helpers import (
     update_bot_usage_tokens
 )
 from power import generate_power
-from preview import generate_preview
+from match.preview import generate_preview
 from tancity import generate_tan_city
 from tan_city_bot import send_tan_city_episode
 from weather import (
@@ -40,7 +40,7 @@ from weather import (
     get_forecast,
     weather_emoji
 )
-from wrapup import generate_wrapup
+from match.wrapup import generate_wrapup
 
 
 logger = logging.getLogger(__name__)
