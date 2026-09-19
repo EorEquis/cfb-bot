@@ -61,6 +61,7 @@ MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
 MYSQL_USER = os.getenv("MYSQL_USER")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
 TOKEN = os.getenv("DISCORD_TOKEN")
+TTS_OUTPUT_DIR = os.getenv("TTS_OUTPUT_DIR")
 
 
 # Send Python logging output to the MariaDB bot_log table.
@@ -145,7 +146,8 @@ register_commands(
     MYSQL_PORT,
     MYSQL_DATABASE,
     MYSQL_USER,
-    MYSQL_PASSWORD
+    MYSQL_PASSWORD,
+    TTS_OUTPUT_DIR
 )
 
 
