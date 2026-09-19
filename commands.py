@@ -16,6 +16,7 @@ import os
 
 from dailystat import generate_dailystat
 from datetime import datetime
+from db._db import execute_query
 from infrastructure.db_sync import sync_db
 from discord import app_commands
 from helpers import (
@@ -31,8 +32,9 @@ from helpers import (
     split_discord_message,
     update_bot_usage_tokens
 )
-from power import generate_power
+from match._matches import get_next_match
 from match.preview import generate_preview
+from power import generate_power
 from tancity import generate_tan_city
 from tan_city_bot import send_tan_city_episode
 from weather import (
@@ -1696,62 +1698,35 @@ def register_commands(
             interaction.user.id
         )
 
-        def load_staged_preview(cursor):
-            cursor.execute(
-                """
-                SELECT id
-                FROM matches
-                WHERE active = TRUE
-                AND TIMESTAMP(
-                    match_date,
-                    GREATEST(
-                        COALESCE(tee_time_1, '00:00:00'),
-                        COALESCE(tee_time_2, '00:00:00'),
-                        COALESCE(tee_time_3, '00:00:00'),
-                        COALESCE(tee_time_4, '00:00:00')
-                    )
-                ) >= NOW()
-                ORDER BY match_date
-                LIMIT 1
-                """
-            )
+        match = await asyncio.to_thread(get_next_match)
 
-            match = cursor.fetchone()
-
-            if match is None:
-                return None, None
-
-            match_id = match[0]
-
-            cursor.execute(
-                """
-                SELECT
-                    r.response_id,
-                    r.response_text,
-                    m.match_date
-                FROM responses r
-                JOIN matches m
-                    ON m.id = r.match_id
-                WHERE r.match_id = %s
-                AND r.command = 'preview'
-                ORDER BY r.response_id DESC
-                LIMIT 1
-                """,
-                (match_id,)
-            )
-
-            return match_id, cursor.fetchone()
-
-        match_id, response = await asyncio.to_thread(
-            database_operation,
-            load_staged_preview
-        )
-
-        if match_id is None:
+        if match is None:
             await interaction.edit_original_response(
                 content="There are no upcoming CFB matches scheduled."
             )
             return
+
+        match_id = match["id"]
+
+        response_rows = await asyncio.to_thread(
+            execute_query,
+            """
+            SELECT
+                r.response_id,
+                r.response_text,
+                m.match_date
+            FROM responses r
+            JOIN matches m
+                ON m.id = r.match_id
+            WHERE r.match_id = %s
+            AND r.command = 'preview'
+            ORDER BY r.response_id DESC
+            LIMIT 1
+            """,
+            (match_id,)
+        )
+
+        response = response_rows[0] if response_rows else None
 
         if response is None:
             await interaction.edit_original_response(
@@ -1761,7 +1736,9 @@ def register_commands(
             )
             return
 
-        response_id, response_text, match_date = response
+        response_id = response["response_id"]
+        response_text = response["response_text"]
+        match_date = response["match_date"]
 
         audio_filename = (
             f"preview_{match_date:%Y%m%d}_{response_id}.mp3"
