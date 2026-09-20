@@ -159,7 +159,7 @@ Tan City Sportsbook is a simulated match-winner market built on top of the same 
 The system has three production components:
 
 - `bookie.py` — an AI market maker that studies the upcoming field, CFB Index data, historical results, and its own prior pricing decisions, then creates American-odds prices with a house margin.
-- `gambler.py` — a population of AI betting agents with persistent bankrolls, individual personality traits, private wagering histories, and the legally significant ability to say **PASS**.
+- `gambler.py` — a population of 500 AI betting agents with persistent bankrolls, individual personality traits, private wagering histories, and the legally significant ability to say **PASS**. One hundred are selected at random for each run, because apparently the fake casino needed both population sampling and shift work.
 - `settlement.py` — deterministic Python that settles wagers from the actual match winner, because there are limits to how much financial arithmetic should be entrusted to a language model.
 
 A typical lifecycle looks roughly like this:
@@ -171,8 +171,10 @@ Upcoming CFB match
 AI Bookie
       │
       ├── studies field / Index / history
-      ├── creates prices
-      └── remembers its own reasoning
+      ├── remembers prior pricing decisions
+      ├── watches incoming action
+      ├── adjusts the market as it sees fit
+      └── remains absolutely certain this is normal
       │
       ▼
 Tan City Market
@@ -328,6 +330,12 @@ CFB Bot
                └── AI gamblers
 ```
 
+For the intended source-code structure, see the [[Intended Repository Structure]] wiki page.
+
+The CFB Handicap Index spreadsheet remains the authoritative source for historical scoring and Index data. Relevant data is synchronized into MariaDB for operational use by the bot.
+
+This means the architecture contains both a spreadsheet and a relational database holding related information, a design pattern commonly known as **"we started with a spreadsheet and things got out of hand."**
+
 The application runs as a Windows service using NSSM.
 
 Usually.
@@ -439,7 +447,7 @@ This arrangement has proven remarkably effective.
 - Discord's UI occasionally hides useful things for sport.
 - The Fuck Ball's motivations remain unknowable.
 - The spreadsheet occasionally knows the future and shares it with functions that weren’t emotionally prepared.
-- One hundred synthetic gamblers can now form strong opinions about two guys playing weekend golf.
+- Five hundred synthetic gamblers can now form strong opinions about a group of degenerates playing golf, although only 100 are permitted to do so at any one time.
 - David FehertAI has access to a bankroll despite substantial evidence that he should not.
 - OpenAI’s AI support bot may instruct you to ask an AI how to deal with the AI support bot, creating a feedback loop so perfectly Douglas Adams that someone should check whether the answer is 42.
 - Chatterbox TTS has produced square pigs, caused bears, and, at sufficiently reckless character counts, a priest screwing off grenading the current market, and a summoning of a dark spirit. The relationship between geometry, ursine causality, violent clergy, financial uncertainty, and demonic possession remains under investigation. Habemus volatility.
