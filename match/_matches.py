@@ -12,6 +12,23 @@ from openai import AsyncOpenAI
 
 client = AsyncOpenAI()
 
+
+async def generate_match_broadcast(model, prompt):
+    response = await client.responses.create(
+        model=model,
+        input=prompt
+    )
+
+    if response.usage:
+        return {
+            "text": response.output_text,
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens
+        }
+
+    return response.output_text
+
+
 def get_active_matches():
     return execute_query(
         """
@@ -46,13 +63,19 @@ def get_last_match():
 
 
 def get_next_match():
-    rows = execute_query(
+    matches = get_upcoming_matches()
+
+    return matches[0] if matches else None
+
+
+def get_upcoming_matches():
+    return execute_query(
         """
         SELECT
             *
         FROM matches
         WHERE active = TRUE
-          AND TIMESTAMP(
+        AND TIMESTAMP(
                 match_date,
                 GREATEST(
                     COALESCE(tee_time_1, '00:00:00'),
@@ -60,33 +83,7 @@ def get_next_match():
                     COALESCE(tee_time_3, '00:00:00'),
                     COALESCE(tee_time_4, '00:00:00')
                 )
-              ) >= NOW()
-        ORDER BY
-            match_date,
-            GREATEST(
-                COALESCE(tee_time_1, '00:00:00'),
-                COALESCE(tee_time_2, '00:00:00'),
-                COALESCE(tee_time_3, '00:00:00'),
-                COALESCE(tee_time_4, '00:00:00')
-            )
-        LIMIT 1
+            ) >= NOW()        
+        ORDER BY match_date
         """
     )
-
-    return rows[0] if rows else None
-
-
-async def generate_match_broadcast(model, prompt):
-    response = await client.responses.create(
-        model=model,
-        input=prompt
-    )
-
-    if response.usage:
-        return {
-            "text": response.output_text,
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens
-        }
-
-    return response.output_text

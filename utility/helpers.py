@@ -15,6 +15,7 @@ import mysql.connector
 import re
 
 from discord import app_commands
+from match._matches import get_upcoming_matches
 
 
 _mysql_host = None
@@ -153,36 +154,15 @@ async def active_match_autocomplete(
     current: str
 ) -> list[app_commands.Choice[str]]:
 
-    def load_matches(cursor):
-        cursor.execute(
-            """
-            SELECT match_date, location
-            FROM matches
-            WHERE active = TRUE
-              AND TIMESTAMP(
-                    match_date,
-                    GREATEST(
-                        COALESCE(tee_time_1, '00:00:00'),
-                        COALESCE(tee_time_2, '00:00:00'),
-                        COALESCE(tee_time_3, '00:00:00'),
-                        COALESCE(tee_time_4, '00:00:00')
-                    )
-                  ) >= NOW()
-            ORDER BY match_date
-            """
-        )
-
-        return cursor.fetchall()
-
     matches = await asyncio.to_thread(
-        _database_operation,
-        load_matches
+        get_upcoming_matches
     )
 
     choices = []
 
-    for match_date, location in matches:
-        date_text = str(match_date)
+    for match in matches:
+        date_text = str(match["match_date"])
+        location = match["location"]
 
         if current.lower() in date_text.lower() or current.lower() in location.lower():
             choices.append(

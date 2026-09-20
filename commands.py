@@ -33,8 +33,8 @@ from utility.helpers import (
     update_bot_usage_tokens
 )
 from match._matches import (
-    get_active_matches,
-    get_next_match
+    get_next_match,
+    get_upcoming_matches
 )
 from match.preview import generate_preview
 from player.power import generate_power
@@ -667,50 +667,8 @@ def register_commands(
         show_all = show is not None and show.value == "all"
 
         if show_all:
-            active_matches = await asyncio.to_thread(
-                get_active_matches
-            )
-
-            now = datetime.now()
-
-            matches = []
-
-            for active_match in active_matches:
-                tee_times = [
-                    active_match["tee_time_1"],
-                    active_match["tee_time_2"],
-                    active_match["tee_time_3"],
-                    active_match["tee_time_4"]
-                ]
-
-                tee_times = [
-                    tee_time
-                    for tee_time in tee_times
-                    if tee_time is not None
-                ]
-
-                latest_tee_time = (
-                    max(tee_times)
-                    if tee_times
-                    else None
-                )
-
-                if latest_tee_time is None:
-                    continue
-
-                match_datetime = datetime.combine(
-                    active_match["match_date"],
-                    (
-                        datetime.min
-                        + latest_tee_time
-                    ).time()
-                )
-
-                if match_datetime >= now:
-                    matches.append(active_match)
-
-            matches.sort(
-                key=lambda match: match["match_date"]
+            matches = await asyncio.to_thread(
+                get_upcoming_matches
             )
 
         else:
