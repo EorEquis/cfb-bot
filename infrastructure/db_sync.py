@@ -10,7 +10,7 @@ import os
 import mysql.connector
 import pandas as pd
 
-import sheets
+import infrastructure.sheets as sheets
 
 
 MYSQL_HOST = os.getenv("MYSQL_HOST")

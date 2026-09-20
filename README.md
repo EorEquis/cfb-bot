@@ -330,7 +330,7 @@ CFB Bot
                └── AI gamblers
 ```
 
-For the intended source-code structure, see the [[Intended Repository Structure]] wiki page.
+For the source-code structure, see the [[Repository Structure]] wiki page.
 
 The CFB Handicap Index spreadsheet remains the authoritative source for historical scoring and Index data. Relevant data is synchronized into MariaDB for operational use by the bot.
 

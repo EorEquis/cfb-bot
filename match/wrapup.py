@@ -12,11 +12,7 @@ import json
 import os
 
 from datetime import datetime
-from openai import AsyncOpenAI
-
-
-# Shared asynchronous OpenAI client used for wrapup generation.
-client = AsyncOpenAI()
+from match._matches import generate_match_broadcast
 
 MODEL = os.getenv("WRAPUP_MODEL", "gpt-5.6-luna")
 
@@ -29,6 +25,8 @@ Here is the data from the most recent match.
 Give us your broadcast. Be fucking hilarious.  Making us laugh is the primary goal.
 
 The supplied data may contain a "David Gambling" section.  The fact of your wagers and outcomes may color the broadcast, but do not disclose wager specifics.
+
+You may discuss the sportsbook market but don't make it the focus of the show.
 
 Do not infer gender.
 
@@ -62,18 +60,5 @@ End EXACTLY with:
 
 """
 
-    # Generate the recap using the configured CFB model.
-    response = await client.responses.create(
-        model=MODEL,
-        input=prompt
-    )
-
-    # Return token usage when available so the caller can record API consumption.
-    if response.usage:
-        return {
-            "text": response.output_text,
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens
-        }
-
-    return response.output_text
+    # Generate the recap using the shared match broadcast machinery.
+    return await generate_match_broadcast(MODEL, prompt)
