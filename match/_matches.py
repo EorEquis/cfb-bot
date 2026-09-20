@@ -63,34 +63,9 @@ def get_last_match():
 
 
 def get_next_match():
-    rows = execute_query(
-        """
-        SELECT
-            *
-        FROM matches
-        WHERE active = TRUE
-          AND TIMESTAMP(
-                match_date,
-                GREATEST(
-                    COALESCE(tee_time_1, '00:00:00'),
-                    COALESCE(tee_time_2, '00:00:00'),
-                    COALESCE(tee_time_3, '00:00:00'),
-                    COALESCE(tee_time_4, '00:00:00')
-                )
-              ) >= NOW()
-        ORDER BY
-            match_date,
-            GREATEST(
-                COALESCE(tee_time_1, '00:00:00'),
-                COALESCE(tee_time_2, '00:00:00'),
-                COALESCE(tee_time_3, '00:00:00'),
-                COALESCE(tee_time_4, '00:00:00')
-            )
-        LIMIT 1
-        """
-    )
+    matches = get_upcoming_matches()
 
-    return rows[0] if rows else None
+    return matches[0] if matches else None
 
 
 def get_upcoming_matches():
