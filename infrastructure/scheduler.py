@@ -13,11 +13,11 @@ import logging
 import mysql.connector
 import os
 
-from bookie import run_bookie
+from tan_city.bookie import run_bookie
 from infrastructure.db_sync import sync_db
 from discord.ext import tasks
-from gambler import run_gamblers
-from settlement import run_settlement
+from tan_city.gambler import run_gamblers
+from tan_city.settlement import run_settlement
 from zoneinfo import ZoneInfo
 
 

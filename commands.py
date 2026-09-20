@@ -38,8 +38,8 @@ from match._matches import (
 )
 from match.preview import generate_preview
 from player.power import generate_power
-from tancity import generate_tan_city
-from tan_city_bot import send_tan_city_episode
+from tan_city.tancity import generate_tan_city
+from tan_city.tan_city_bot import send_tan_city_episode
 from utility.weather import (
     format_time,
     get_forecast,
