@@ -14,7 +14,7 @@ import logging
 import mysql.connector
 import os
 
-from dailystat import generate_dailystat
+from player.dailystat import generate_dailystat
 from datetime import datetime
 from db._db import execute_query, execute_upsert
 from infrastructure.db_sync import sync_db
@@ -37,7 +37,7 @@ from match._matches import (
     get_next_match
 )
 from match.preview import generate_preview
-from power import generate_power
+from player.power import generate_power
 from tancity import generate_tan_city
 from tan_city_bot import send_tan_city_episode
 from weather import (
