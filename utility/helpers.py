@@ -159,6 +159,15 @@ async def active_match_autocomplete(
             SELECT match_date, location
             FROM matches
             WHERE active = TRUE
+              AND TIMESTAMP(
+                    match_date,
+                    GREATEST(
+                        COALESCE(tee_time_1, '00:00:00'),
+                        COALESCE(tee_time_2, '00:00:00'),
+                        COALESCE(tee_time_3, '00:00:00'),
+                        COALESCE(tee_time_4, '00:00:00')
+                    )
+                  ) >= NOW()
             ORDER BY match_date
             """
         )
