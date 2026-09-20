@@ -19,7 +19,7 @@ from datetime import datetime
 from db._db import execute_query, execute_upsert
 from infrastructure.db_sync import sync_db
 from discord import app_commands
-from helpers import (
+from utility.helpers import (
     active_match_autocomplete,
     admin_only,
     bot_admin_only,
@@ -40,7 +40,7 @@ from match.preview import generate_preview
 from player.power import generate_power
 from tancity import generate_tan_city
 from tan_city_bot import send_tan_city_episode
-from weather import (
+from utility.weather import (
     format_time,
     get_forecast,
     weather_emoji
