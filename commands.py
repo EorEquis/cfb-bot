@@ -27,6 +27,7 @@ from match.preview import generate_preview
 from match.wrapup import generate_wrapup
 from player._players import (
     get_active_player_career_stats,
+    get_current_cfb_holder,
     get_player_profile,
     get_player_recent_performances
 )
@@ -1027,21 +1028,8 @@ def register_commands(
                 "Recent Performances": recent_performances
             })
 
-        holder_rows = await asyncio.to_thread(
-            execute_query,
-            """
-            SELECT player_name
-            FROM vw_completed_match_results
-            WHERE match_winner = 1
-            ORDER BY match_date DESC, match_id DESC
-            LIMIT 1
-            """
-        )
-
-        current_holder = (
-            holder_rows[0]["player_name"]
-            if holder_rows
-            else None
+        current_holder = await asyncio.to_thread(
+            get_current_cfb_holder
         )
 
         power_data = {

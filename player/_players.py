@@ -26,6 +26,20 @@ def get_active_player_career_stats():
         """
     )
     
+
+def get_current_cfb_holder():
+    rows = execute_query(
+        """
+        SELECT player_name
+        FROM vw_completed_match_results
+        WHERE match_winner = 1
+        ORDER BY match_date DESC, match_id DESC
+        LIMIT 1
+        """
+    )
+
+    return rows[0]["player_name"] if rows else None
+
     
 def get_player_profile(player):
     rows = execute_query(
