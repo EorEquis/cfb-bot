@@ -27,7 +27,8 @@ from match.preview import generate_preview
 from match.wrapup import generate_wrapup
 from player._players import (
     get_active_player_career_stats,
-    get_player_profile
+    get_player_profile,
+    get_player_recent_performances
 )
 from player.dailystat import generate_dailystat
 from player.power import generate_power
@@ -1003,15 +1004,8 @@ def register_commands(
 
         for row in player_rows:
             recent_rows = await asyncio.to_thread(
-                execute_query,
-                """
-                SELECT match_performance
-                FROM vw_completed_match_results
-                WHERE player_id = %s
-                ORDER BY match_date DESC, match_id DESC
-                LIMIT 3
-                """,
-                (row["player_id"],)
+                get_player_recent_performances,
+                row["player_id"]
             )
 
             recent_performances = [

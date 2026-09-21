@@ -63,3 +63,16 @@ def get_player_profile(player):
     )
 
     return rows[0] if rows else None
+
+
+def get_player_recent_performances(player_id):
+    return execute_query(
+        """
+        SELECT match_performance
+        FROM vw_completed_match_results
+        WHERE player_id = %s
+        ORDER BY match_date DESC, match_id DESC
+        LIMIT 3
+        """,
+        (player_id,)
+    )
