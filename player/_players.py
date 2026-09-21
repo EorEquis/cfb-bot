@@ -9,6 +9,24 @@
 from db._db import execute_query
 
 
+def get_active_player_career_stats():
+    return execute_query(
+        """
+        SELECT
+            s.player_id,
+            s.player_name,
+            s.normalized_cfb_index,
+            s.matches_played,
+            s.total_points,
+            s.group_wins,
+            s.match_wins
+        FROM vw_player_career_stats s
+        WHERE s.active = TRUE
+        ORDER BY s.player_name
+        """
+    )
+    
+    
 def get_player_profile(player):
     rows = execute_query(
         """

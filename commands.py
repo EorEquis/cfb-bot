@@ -25,7 +25,10 @@ from match._matches import (
 )
 from match.preview import generate_preview
 from match.wrapup import generate_wrapup
-from player._players import get_player_profile
+from player._players import (
+    get_active_player_career_stats,
+    get_player_profile
+)
 from player.dailystat import generate_dailystat
 from player.power import generate_power
 from tan_city.tancity import generate_tan_city
@@ -993,20 +996,7 @@ def register_commands(
         )
 
         player_rows = await asyncio.to_thread(
-            execute_query,
-            """
-            SELECT
-                s.player_id,
-                s.player_name,
-                s.normalized_cfb_index,
-                s.matches_played,
-                s.total_points,
-                s.group_wins,
-                s.match_wins
-            FROM vw_player_career_stats s
-            WHERE s.active = TRUE
-            ORDER BY s.player_name
-            """
+            get_active_player_career_stats
         )
 
         players = []
