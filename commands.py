@@ -200,6 +200,32 @@ def register_commands(
         )
 
 
+    # Provide the official CFB Drive folder link.
+    @bot.tree.command(
+        name="cfb",
+        description="See the official CFB documents",
+        guild=dev_guild
+    )
+    async def cfb(interaction: discord.Interaction):
+        await asyncio.to_thread(
+            log_bot_usage,
+            "cfb",
+            interaction.user.id
+        )
+
+        if not dev_channel_only(interaction):
+            await interaction.response.send_message(
+                "CFB Bot is currently restricted to #cfb-bot-dev.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            "📜 **Official CFB Drive Folder:**\n"
+            "https://drive.google.com/drive/folders/1nSsaS5M_nz_e8SlGS9Tu7fl6dWwxHmEy?usp=sharing"
+        )
+        
+        
     # Find one ridiculous but defensible observation in complete CFB match history.
     @bot.tree.command(
         name="dailystat",
@@ -572,34 +598,6 @@ def register_commands(
     )
     async def playing_in(interaction: discord.Interaction):
         await set_availability(interaction, "in")
-
-
-    # Provide the shared CFB Index spreadsheet link.
-    @bot.tree.command(
-        name="index",
-        description="View the CFB Index spreadsheet",
-        guild=dev_guild
-    )
-    async def index(interaction: discord.Interaction):
-        await asyncio.to_thread(
-            log_bot_usage,
-            "index",
-            interaction.user.id
-        )
-
-        if not dev_channel_only(interaction):
-            await interaction.response.send_message(
-                "CFB Bot is currently restricted to #cfb-bot-dev.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_message(
-            "📜 **Official CFB Index:**\n"
-            "https://docs.google.com/spreadsheets/d/"
-            "14KFO24N0DGu24mRUu5BE6_vpObWGyFCYhKKGQRLG6Do/"
-            "edit?usp=sharing"
-        )
 
 
     # Show the next match, or all upcoming matches, with weather for the next match when available.
@@ -1699,34 +1697,6 @@ def register_commands(
             f"Updated: **{updated}**\n"
             f"Not found: **{not_found}**",
             ephemeral=True
-        )
-
-
-    # Provide the official CFB rules document link.
-    @bot.tree.command(
-        name="rules",
-        description="Get the official CFB rules",
-        guild=dev_guild
-    )
-    async def rules(interaction: discord.Interaction):
-        await asyncio.to_thread(
-            log_bot_usage,
-            "rules",
-            interaction.user.id
-        )
-
-        if not dev_channel_only(interaction):
-            await interaction.response.send_message(
-                "CFB Bot is currently restricted to #cfb-bot-dev.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_message(
-            "📜 **Official CFB Rules:**\n"
-            "https://docs.google.com/document/d/"
-            "1TVKjPrOkk5n_VvjfKff3ZEqdVmj_f1IS7qpm5diBFf4/"
-            "edit?usp=sharing"
         )
 
 
