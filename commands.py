@@ -1110,34 +1110,26 @@ def register_commands(
 
         match_id = match["id"]
 
-        player_availability = await asyncio.to_thread(
-            execute_query,
-            """
-            SELECT
-                p.player_name,
-                CASE
-                    WHEN a.status = 'in' THEN 'in'
-                    WHEN a.status = 'maybe' THEN 'maybe'
-                    ELSE 'unknown'
-                END AS status
-            FROM players p
-            LEFT JOIN availability a
-                ON a.player_id = p.id
-                AND a.match_id = %s
-            WHERE p.active = TRUE
-            AND (
-                a.status IN ('in', 'maybe')
-                OR a.status IS NULL
+        availability = await asyncio.to_thread(
+            get_player_availability,
+            match_id
+        )
+
+        player_availability = [
+            row
+            for row in availability["players"]
+            if row["status"] != "out"
+        ]
+
+        player_availability.sort(
+            key=lambda row: (
+                {
+                    "in": 1,
+                    "maybe": 2,
+                    "unknown": 3
+                }[row["status"]],
+                row["player_name"]
             )
-            ORDER BY
-                CASE
-                    WHEN a.status = 'in' THEN 1
-                    WHEN a.status = 'maybe' THEN 2
-                    ELSE 3
-                END,
-                p.player_name
-            """,
-            (match_id,)
         )
 
         player_names = [
