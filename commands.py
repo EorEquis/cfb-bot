@@ -14,11 +14,22 @@ import logging
 import mysql.connector
 import os
 
-from player.dailystat import generate_dailystat
+
 from datetime import datetime
 from db._db import execute_query, execute_upsert
-from infrastructure.db_sync import sync_db
 from discord import app_commands
+from infrastructure.db_sync import sync_db
+from match._matches import (
+    get_next_match,
+    get_upcoming_matches
+)
+from match.preview import generate_preview
+from match.wrapup import generate_wrapup
+from player._players import get_player_profile
+from player.dailystat import generate_dailystat
+from player.power import generate_power
+from tan_city.tancity import generate_tan_city
+from tan_city.tan_city_bot import send_tan_city_episode
 from utility.helpers import (
     active_match_autocomplete,
     admin_only,
@@ -32,21 +43,11 @@ from utility.helpers import (
     split_discord_message,
     update_bot_usage_tokens
 )
-from match._matches import (
-    get_next_match,
-    get_upcoming_matches
-)
-from match.preview import generate_preview
-from player.power import generate_power
-from tan_city.tancity import generate_tan_city
-from tan_city.tan_city_bot import send_tan_city_episode
 from utility.weather import (
     format_time,
     get_forecast,
     weather_emoji
 )
-from match.wrapup import generate_wrapup
-
 
 logger = logging.getLogger(__name__)
 
@@ -903,42 +904,10 @@ def register_commands(
             interaction.user.id
         )
 
-        rows = await asyncio.to_thread(
-            execute_query,
-            """
-            SELECT
-                p.player_name,
-                p.discord_display_name,
-                s.quote,
-                s.normalized_cfb_index,
-                s.matches_played,
-                s.total_points,
-                s.group_wins,
-                s.match_wins,
-                (
-                    SELECT r.match_performance
-                    FROM vw_completed_match_results r
-                    WHERE r.player_id = p.id
-                    ORDER BY r.match_date DESC, r.match_id DESC
-                    LIMIT 1
-                ) AS recent_performance
-            FROM players p
-            JOIN vw_player_career_stats s
-                ON s.player_id = p.id
-            WHERE p.active = TRUE
-            AND (
-                    p.player_name = %s
-                OR p.discord_display_name = %s
-            )
-            LIMIT 1
-            """,
-            (
-                player,
-                player
-            )
+        row = await asyncio.to_thread(
+            get_player_profile,
+            player
         )
-
-        row = rows[0] if rows else None
 
         if row is None:
             await interaction.followup.send(
