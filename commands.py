@@ -28,8 +28,9 @@ from match.wrapup import generate_wrapup
 from player._players import (
     get_active_player_career_stats,
     get_current_cfb_holder,
+    get_player_availability,
     get_player_profile,
-    get_player_recent_performances
+    get_player_recent_performances,
 )
 from player.dailystat import generate_dailystat
 from player.power import generate_power
@@ -2099,44 +2100,21 @@ def register_commands(
             )
             return
 
-        rows = await asyncio.to_thread(
-            execute_query,
-            """
-            SELECT
-                p.player_name,
-                COALESCE(a.status, 'unknown') AS status
-            FROM players p
-            LEFT JOIN availability a
-                ON a.player_id = p.id
-               AND a.match_id = %s
-            WHERE p.active = TRUE
-            ORDER BY p.player_name
-            """,
-            (match["id"],)
+        availability = await asyncio.to_thread(
+            get_player_availability,
+            match["id"]
         )
 
-        match_date = match["match_date"]
-        tee_time_1 = match["tee_time_1"]
-        tee_time_2 = match["tee_time_2"]
-        tee_time_3 = match["tee_time_3"]
-        tee_time_4 = match["tee_time_4"]
+        rows = availability["players"]
 
-        capacity = sum(
-            tee_time is not None
-            for tee_time in (
-                tee_time_1,
-                tee_time_2,
-                tee_time_3,
-                tee_time_4
-            )
-        ) * 4
+        match_date = match["match_date"]
 
         in_count = sum(
             row["status"] == "in"
             for row in rows
         )
 
-        spots_available = capacity - in_count
+        spots_available = availability["available_spots"]
 
         groups = {
             "in": [],
@@ -2164,7 +2142,6 @@ def register_commands(
         await interaction.response.send_message(message)
 
 
-    # Generate an AI-assisted recap of the latest match and record API token usage.
     # Generate an AI-assisted recap of the latest match and record API token usage.
     @bot.tree.command(
         name="wrapup",
