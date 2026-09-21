@@ -25,7 +25,7 @@ def get_active_player_career_stats():
         ORDER BY s.player_name
         """
     )
-    
+
 
 def get_current_cfb_holder():
     rows = execute_query(
@@ -40,7 +40,7 @@ def get_current_cfb_holder():
 
     return rows[0]["player_name"] if rows else None
 
-    
+
 def get_player_profile(player):
     rows = execute_query(
         """
