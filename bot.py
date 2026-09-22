@@ -66,13 +66,7 @@ TTS_OUTPUT_DIR = os.getenv("TTS_OUTPUT_DIR")
 
 # Send Python logging output to the MariaDB bot_log table.
 # DatabaseLogHandler is defined in app_log.py.
-db_log_handler = DatabaseLogHandler(
-    MYSQL_HOST,
-    MYSQL_PORT,
-    MYSQL_DATABASE,
-    MYSQL_USER,
-    MYSQL_PASSWORD
-)
+db_log_handler = DatabaseLogHandler()
 
 db_log_handler.setLevel(LOG_LEVEL)
 

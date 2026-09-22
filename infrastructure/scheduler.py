@@ -13,9 +13,10 @@ import logging
 import mysql.connector
 import os
 
-from tan_city.bookie import run_bookie
-from infrastructure.db_sync import sync_db
+from db._db import execute_query, execute_upsert
 from discord.ext import tasks
+from infrastructure.db_sync import sync_db
+from tan_city.bookie import run_bookie
 from tan_city.gambler import run_gamblers
 from tan_city.settlement import run_settlement
 from zoneinfo import ZoneInfo
@@ -24,12 +25,6 @@ from zoneinfo import ZoneInfo
 logger = logging.getLogger(__name__)
 
 CENTRAL_TIME = ZoneInfo("America/Chicago")
-
-MYSQL_HOST = os.getenv("MYSQL_HOST")
-MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
-MYSQL_USER = os.getenv("MYSQL_USER")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD")
 
 BETTING_TIMES = [
     datetime.time(hour=0, minute=0, tzinfo=CENTRAL_TIME),
@@ -49,85 +44,42 @@ _last_db_sync_minute = None
 
 
 def _get_today_match_status(today):
-    connection = mysql.connector.connect(
-        connection_timeout=5,
-        host=MYSQL_HOST,
-        port=MYSQL_PORT,
-        database=MYSQL_DATABASE,
-        user=MYSQL_USER,
-        password=MYSQL_PASSWORD
+    rows = execute_query(
+        """
+        SELECT
+            TIMESTAMP(
+                m.match_date,
+                GREATEST(
+                    COALESCE(m.tee_time_1, '00:00:00'),
+                    COALESCE(m.tee_time_2, '00:00:00'),
+                    COALESCE(m.tee_time_3, '00:00:00'),
+                    COALESCE(m.tee_time_4, '00:00:00')
+                )
+            ) AS latest_tee_datetime,
+            (
+                SELECT COUNT(*)
+                FROM match_results mr
+                WHERE mr.match_id = m.id
+                AND mr.match_winner = 1
+            ) AS match_winner_count
+        FROM matches m
+        WHERE m.match_date = %s
+        AND m.active = TRUE
+        LIMIT 1
+        """,
+        (today,)
     )
 
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            SELECT
-                m.id,
-                TIMESTAMP(
-                    m.match_date,
-                    GREATEST(
-                        COALESCE(m.tee_time_1, '00:00:00'),
-                        COALESCE(m.tee_time_2, '00:00:00'),
-                        COALESCE(m.tee_time_3, '00:00:00'),
-                        COALESCE(m.tee_time_4, '00:00:00')
-                    )
-                ),
-                (
-                    SELECT COUNT(*)
-                    FROM match_results mr
-                    WHERE mr.match_id = m.id
-                    AND mr.match_winner = 1
-                )
-            FROM matches m
-            WHERE m.match_date = %s
-            AND m.active = TRUE
-            LIMIT 1
-            """,
-            (today,)
-        )
-
-        return cursor.fetchone()
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-        connection.close()
+    return rows[0] if rows else None
 
 
 def _rollover_gambler_balances():
-    connection = mysql.connector.connect(
-        connection_timeout=5,
-        host=MYSQL_HOST,
-        port=MYSQL_PORT,
-        database=MYSQL_DATABASE,
-        user=MYSQL_USER,
-        password=MYSQL_PASSWORD
+    execute_upsert(
+        """
+        UPDATE gamblers
+        SET previous_balance = cycle_start_balance
+        """
     )
-
-    cursor = None
-
-    try:
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            UPDATE gamblers
-            SET previous_balance = cycle_start_balance
-            """
-        )
-
-        connection.commit()
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-        connection.close()
         
 async def run_db_sync():
     logger.info("CFB database sync starting")
@@ -213,7 +165,8 @@ async def db_sync_scheduler():
         )
 
         if match_status is not None:
-            match_id, latest_tee_datetime, match_winner_count = match_status
+            latest_tee_datetime = match_status["latest_tee_datetime"]
+            match_winner_count = match_status["match_winner_count"]
 
             latest_tee_datetime = latest_tee_datetime.replace(
                 tzinfo=CENTRAL_TIME
@@ -249,7 +202,8 @@ async def db_sync_scheduler():
         )
 
         if match_status is not None:
-            match_id, latest_tee_datetime, match_winner_count = match_status
+            latest_tee_datetime = match_status["latest_tee_datetime"]
+            match_winner_count = match_status["match_winner_count"]
 
             if match_winner_count == 1:
                 try:

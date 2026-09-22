@@ -14,10 +14,12 @@ load_dotenv()
 
 import asyncio
 import json
+import mysql.connector
 import os
 
-import mysql.connector
+from match._matches import get_next_match
 from openai import AsyncOpenAI
+from player._players import get_player_availability
 
 
 MODEL = os.getenv("BOOKIE_MODEL", "gpt-5.6-sol")
@@ -334,70 +336,6 @@ async def generate_odds(bookie_data):
     return json.loads(response.output_text)
 
 
-# Read all active players and their current availability context.
-# MAYBE and no response are both exposed to the agent as UNKNOWN.
-def get_player_context(match_id):
-    connection = get_db_connection()
-    cursor = connection.cursor(dictionary=True)
-
-    try:
-        cursor.execute(
-            """
-            SELECT
-                p.id AS player_id,
-                p.player_name,
-                CASE
-                    WHEN a.status = 'in' THEN 'in'
-                    WHEN a.status = 'out' THEN 'out'
-                    ELSE 'unknown'
-                END AS status
-            FROM players p
-            LEFT JOIN availability a
-                ON a.player_id = p.id
-                AND a.match_id = %s
-            WHERE p.active = TRUE
-            ORDER BY p.player_name
-            """,
-            (match_id,),
-        )
-
-        return cursor.fetchall()
-
-    finally:
-        cursor.close()
-        connection.close()
-
-
-# Read the Players and Availability tables and return players currently IN.
-def get_current_field(match_id):
-    connection = get_db_connection()
-    cursor = connection.cursor(dictionary=True)
-
-    try:
-        cursor.execute(
-            """
-            SELECT
-                p.id AS player_id,
-                p.player_name,
-                a.status
-            FROM availability a
-            INNER JOIN players p
-                ON p.id = a.player_id
-            WHERE a.match_id = %s
-              AND p.active = TRUE
-              AND a.status = 'in'
-            ORDER BY p.player_name
-            """,
-            (match_id,),
-        )
-
-        return cursor.fetchall()
-
-    finally:
-        cursor.close()
-        connection.close()
-
-
 # Read all currently unsettled wagers for the upcoming match.
 #
 # The bookmaker can see bets placed against its market, but does not receive
@@ -485,46 +423,6 @@ def get_previous_market_prices(match_id):
         connection.close()
 
 
-# Return the next active match that has not finished yet.
-# An active match remains upcoming until its latest configured tee time passes.
-def get_upcoming_match():
-    connection = get_db_connection()
-    cursor = connection.cursor(dictionary=True)
-
-    try:
-        cursor.execute(
-            """
-            SELECT
-                id,
-                match_date,
-                location,
-                tee_time_1,
-                tee_time_2,
-                tee_time_3,
-                tee_time_4
-            FROM matches
-            WHERE active = TRUE
-              AND TIMESTAMP(
-                    match_date,
-                    GREATEST(
-                        COALESCE(tee_time_1, '00:00:00'),
-                        COALESCE(tee_time_2, '00:00:00'),
-                        COALESCE(tee_time_3, '00:00:00'),
-                        COALESCE(tee_time_4, '00:00:00')
-                    )
-                  ) >= NOW()
-            ORDER BY match_date
-            LIMIT 1
-            """
-        )
-
-        return cursor.fetchone()
-
-    finally:
-        cursor.close()
-        connection.close()
-
-
 # Run the bookie once when this module is executed directly.
 async def main():
     result = await run_bookie()
@@ -543,23 +441,36 @@ async def main():
 
 # Run one complete Tan City bookie cycle.
 async def run_bookie():
-    match = await asyncio.to_thread(get_upcoming_match)
+    match = await asyncio.to_thread(get_next_match)
 
     if match is None:
         return None
 
-    field = await asyncio.to_thread(
-        get_current_field,
+    availability = await asyncio.to_thread(
+        get_player_availability,
         match["id"],
     )
+
+    field = [
+        row
+        for row in availability["players"]
+        if row["status"] == "in"
+    ]
 
     if not field:
         return None
 
-    player_context = await asyncio.to_thread(
-        get_player_context,
-        match["id"],
-    )
+    player_context = [
+        {
+            **row,
+            "status": (
+                row["status"]
+                if row["status"] in ("in", "out")
+                else "unknown"
+            )
+        }
+        for row in availability["players"]
+    ]
 
     bookie_data = await asyncio.to_thread(
         build_bookie_data,

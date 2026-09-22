@@ -41,6 +41,64 @@ def get_current_cfb_holder():
     return rows[0]["player_name"] if rows else None
 
 
+def get_player_availability(match_id):
+    match_rows = execute_query(
+        """
+        SELECT
+            tee_time_1,
+            tee_time_2,
+            tee_time_3,
+            tee_time_4
+        FROM matches
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (match_id,)
+    )
+
+    if not match_rows:
+        return None
+
+    match = match_rows[0]
+
+    player_rows = execute_query(
+        """
+        SELECT
+            p.id AS player_id,
+            p.player_name,
+            COALESCE(a.status, 'unknown') AS status
+        FROM players p
+        LEFT JOIN availability a
+            ON a.player_id = p.id
+            AND a.match_id = %s
+        WHERE p.active = TRUE
+        ORDER BY p.player_name
+        """,
+        (match_id,)
+    )
+
+    max_spots = sum(
+        tee_time is not None
+        for tee_time in (
+            match["tee_time_1"],
+            match["tee_time_2"],
+            match["tee_time_3"],
+            match["tee_time_4"]
+        )
+    ) * 4
+
+    in_count = sum(
+        row["status"] == "in"
+        for row in player_rows
+    )
+
+    return {
+        "players": player_rows,
+        "max_spots": max_spots,
+        "available_spots": max_spots - in_count
+    }
+    
+    
 def get_player_profile(player):
     rows = execute_query(
         """

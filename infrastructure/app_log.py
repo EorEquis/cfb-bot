@@ -9,77 +9,32 @@
 ###################
 
 import logging
-import mysql.connector
 import queue
 import threading
 
+from db._db import execute_upsert
 
 def write_log(
-    mysql_host,
-    mysql_port,
-    mysql_database,
-    mysql_user,
-    mysql_password,
     severity,
     message,
     source=None
 ):
-    
-    conn = mysql.connector.connect(
-        connection_timeout=5,
-        host=mysql_host,
-        port=mysql_port,
-        database=mysql_database,
-        user=mysql_user,
-        password=mysql_password
+    execute_upsert(
+        """
+        INSERT INTO bot_log
+            (severity, source, message)
+        VALUES (%s, %s, %s)
+        """,
+        (
+            severity,
+            source,
+            message
+        )
     )
 
-    cursor = None
-
-    try:
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO bot_log
-                (severity, source, message)
-            VALUES (%s, %s, %s)
-            """,
-            (
-                severity,
-                source,
-                message
-            )
-        )
-
-        conn.commit()
-
-    except Exception:
-        conn.rollback()
-        raise
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-        conn.close()
-
-
 class DatabaseLogHandler(logging.Handler):
-    def __init__(
-        self,
-        mysql_host,
-        mysql_port,
-        mysql_database,
-        mysql_user,
-        mysql_password
-    ):
+    def __init__(self):
         super().__init__()
-
-        self.mysql_host = mysql_host
-        self.mysql_port = mysql_port
-        self.mysql_database = mysql_database
-        self.mysql_user = mysql_user
-        self.mysql_password = mysql_password
 
         self.log_queue = queue.SimpleQueue()
         self.worker = threading.Thread(
@@ -95,11 +50,6 @@ class DatabaseLogHandler(logging.Handler):
 
             try:
                 write_log(
-                    self.mysql_host,
-                    self.mysql_port,
-                    self.mysql_database,
-                    self.mysql_user,
-                    self.mysql_password,
                     severity,
                     message,
                     source
