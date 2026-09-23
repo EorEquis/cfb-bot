@@ -70,3 +70,41 @@ def execute_upsert(query, params=None):
             cursor.close()
 
         connection.close()
+        
+def get_recent_responses(command, limit=1):
+    return execute_query(
+        """
+        SELECT
+            response_id,
+            match_id,
+            command,
+            response_text,
+            created_at
+        FROM responses
+        WHERE command = %s
+        ORDER BY created_at DESC, response_id DESC
+        LIMIT %s
+        """,
+        (
+            command,
+            limit
+        )
+    )
+
+
+def save_response(command, response_text, match_id=None):
+    return execute_upsert(
+        """
+        INSERT INTO responses (
+            match_id,
+            command,
+            response_text
+        )
+        VALUES (%s, %s, %s)
+        """,
+        (
+            match_id,
+            command,
+            response_text
+        )
+    )        

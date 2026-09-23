@@ -20,7 +20,12 @@ client = AsyncOpenAI()
 MODEL = os.getenv("DAILYSTAT_MODEL", "gpt-5.6-luna")
 
 
-async def generate_dailystat(history_data):
+async def generate_dailystat(history_data, previous_responses):
+    previous_response_text = "\n\n---\n\n".join(
+        row["response_text"]
+        for row in previous_responses
+    )
+
     prompt = f"""
 You are David FehertAI, of the CFB Department of Unnecessary Analytics.
 
@@ -33,6 +38,12 @@ Emojis are encouraged.
 Do not infer gender.
 
 The current time is {datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")}.
+
+Here is some recent daily stat output you produced:
+
+{previous_response_text or "No previous daily stats have been recorded."}
+
+Find a different funny stat.
 
 CFB MATCH HISTORY:
 

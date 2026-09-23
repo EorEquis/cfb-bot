@@ -15,7 +15,12 @@ import os
 
 
 from datetime import datetime
-from db._db import execute_query, execute_upsert
+from db._db import (
+    execute_query,
+    execute_upsert,
+    get_recent_responses,
+    save_response
+)
 from discord import app_commands
 from infrastructure.db_sync import sync_db
 from match._matches import (
@@ -259,7 +264,22 @@ def register_commands(
             return
 
         try:
-            result = await generate_dailystat(history_data)
+            previous_responses = await asyncio.to_thread(
+                get_recent_responses,
+                "dailystat",
+                2
+            )
+
+            result = await generate_dailystat(
+                history_data,
+                previous_responses
+            )
+
+            await asyncio.to_thread(
+                save_response,
+                "dailystat",
+                result["text"]
+            )
 
             await asyncio.to_thread(
                 mark_bot_usage_api_call,
