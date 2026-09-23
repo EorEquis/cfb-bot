@@ -14,6 +14,7 @@ import discord
 import mysql.connector
 import re
 
+from db._db import execute_upsert
 from discord import app_commands
 from match._matches import get_upcoming_matches
 
@@ -109,7 +110,7 @@ def _split_discord_sections(text):
 
     for line in lines:
         is_heading = re.match(r"^##\s+\S", line)
-        is_numbered_entry = re.match(r"^\d+\.\s+\S", line)
+        is_numbered_entry = re.match(r"^(?:\*\*)?\d+\.\s+\S", line)
 
         if (is_heading or is_numbered_entry) and current:
             sections.append("\n".join(current).strip())
@@ -358,17 +359,14 @@ def log_bot_usage(
 
 
 def mark_bot_usage_api_call(usage_id):
-    def mark_api_call(cursor):
-        cursor.execute(
-            """
-            UPDATE bot_usage
-            SET api_call = TRUE
-            WHERE id = %s
-            """,
-            (usage_id,)
-        )
-
-    _database_operation(mark_api_call, commit=True)
+    execute_upsert(
+        """
+        UPDATE bot_usage
+        SET api_call = TRUE
+        WHERE id = %s
+        """,
+        (usage_id,)
+    )
     
     
 async def player_autocomplete(
@@ -784,20 +782,17 @@ def update_bot_usage_tokens(
     input_tokens,
     output_tokens
 ):
-    def update_tokens(cursor):
-        cursor.execute(
-            """
-            UPDATE bot_usage
-            SET
-                input_tokens = %s,
-                output_tokens = %s
-            WHERE id = %s
-            """,
-            (
-                input_tokens,
-                output_tokens,
-                usage_id
-            )
+    execute_upsert(
+        """
+        UPDATE bot_usage
+        SET
+            input_tokens = %s,
+            output_tokens = %s
+        WHERE id = %s
+        """,
+        (
+            input_tokens,
+            output_tokens,
+            usage_id
         )
-
-    _database_operation(update_tokens, commit=True)
+    )

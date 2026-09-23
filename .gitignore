@@ -4,5 +4,5 @@ __pycache__/
 *.wav
 .vscode/
 *.mp3
-# Files for troubleshooting OpenAI's fraudulent charges, don't want them in repo
+# part of the openai container billing disaster don't ever include these.
 openai_check*.py
