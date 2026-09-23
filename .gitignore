@@ -4,3 +4,5 @@ __pycache__/
 *.wav
 .vscode/
 *.mp3
+# part of the openai container billing disaster don't ever include these.
+openai_check*.py

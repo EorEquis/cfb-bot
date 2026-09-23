@@ -26,7 +26,6 @@ from match._matches import (
 from match.preview import generate_preview
 from match.wrapup import generate_wrapup
 from player._players import (
-    get_active_player_career_stats,
     get_current_cfb_holder,
     get_player_availability,
     get_player_profile,
@@ -873,9 +872,17 @@ def register_commands(
             interaction.user.id
         )
 
-        row = await asyncio.to_thread(
-            get_player_profile,
-            player
+        player_rows = await asyncio.to_thread(
+            get_player_profile
+        )
+
+        row = next(
+            (
+                row for row in player_rows
+                if row["player_name"] == player
+                or row["discord_display_name"] == player
+            ),
+            None
         )
 
         if row is None:
@@ -893,6 +900,7 @@ def register_commands(
         total_points = row["total_points"]
         group_wins = row["group_wins"]
         match_wins = row["match_wins"]
+        current_cfb = row["current_cfb"]
         recent_performance = row["recent_performance"]
 
         message = (
@@ -903,13 +911,17 @@ def register_commands(
         if display_name:
             message += f"\n🎮 Discord: **{display_name}**"
 
+        message += "\n\n"
+
+        if current_cfb:
+            message += "👑 **Current CFB Holder**\n"
+
         message += (
-            f"\n\n"
             f"📊 **CFB Index:** {current_index:.2f}\n"
             f"⛳ **Matches Played:** {matches_played}\n"
             f"🎯 **Total Points:** {total_points:g}\n"
             f"🏆 **Group Wins:** {group_wins}\n"
-            f"👑 **Match Wins:** {match_wins}"
+            f"🥇 **Match Wins:** {match_wins}"
         )
 
         if recent_performance is not None:
@@ -962,7 +974,7 @@ def register_commands(
         )
 
         player_rows = await asyncio.to_thread(
-            get_active_player_career_stats
+            get_player_profile
         )
 
         players = []
