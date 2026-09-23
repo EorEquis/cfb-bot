@@ -39,7 +39,39 @@ def get_active_matches():
         ORDER BY match_date DESC
         """
     )
+
+
+def get_completed_match_history():
+    return execute_query(
+        """
+        SELECT
+            match_id,
+            match_date,
+            location,
+            notes,
+            special_rule,
+            group_id,
+            players_in_group,
+            total_points,
+            ending_hole,
+            player_id,
+            player_name,
+            player_points,
+            group_winner,
+            match_winner,
+            pre_match_index,
+            match_performance,
+            net_handicap_credits
+        FROM vw_completed_match_results
+        ORDER BY
+            match_date,
+            match_id,
+            group_id,
+            player_name
+        """
+    )
     
+        
 def get_last_match():
     rows = execute_query(
         """

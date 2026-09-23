@@ -9,24 +9,6 @@
 from db._db import execute_query
 
 
-def get_active_player_career_stats():
-    return execute_query(
-        """
-        SELECT
-            s.player_id,
-            s.player_name,
-            s.normalized_cfb_index,
-            s.matches_played,
-            s.total_points,
-            s.group_wins,
-            s.match_wins
-        FROM vw_player_career_stats s
-        WHERE s.active = TRUE
-        ORDER BY s.player_name
-        """
-    )
-
-
 def get_current_cfb_holder():
     rows = execute_query(
         """
@@ -99,10 +81,11 @@ def get_player_availability(match_id):
     }
     
     
-def get_player_profile(player):
-    rows = execute_query(
+def get_player_profile():
+    return execute_query(
         """
         SELECT
+            p.id AS player_id,
             p.player_name,
             p.discord_display_name,
             s.quote,
@@ -111,6 +94,17 @@ def get_player_profile(player):
             s.total_points,
             s.group_wins,
             s.match_wins,
+            CASE
+                WHEN p.id = (
+                    SELECT r.player_id
+                    FROM vw_completed_match_results r
+                    WHERE r.match_winner = 1
+                    ORDER BY r.match_date DESC, r.match_id DESC
+                    LIMIT 1
+                )
+                THEN 1
+                ELSE 0
+            END AS current_cfb,
             (
                 SELECT r.match_performance
                 FROM vw_completed_match_results r
@@ -122,19 +116,9 @@ def get_player_profile(player):
         JOIN vw_player_career_stats s
             ON s.player_id = p.id
         WHERE p.active = TRUE
-        AND (
-                p.player_name = %s
-            OR p.discord_display_name = %s
-        )
-        LIMIT 1
-        """,
-        (
-            player,
-            player
-        )
+        ORDER BY p.player_name
+        """
     )
-
-    return rows[0] if rows else None
 
 
 def get_player_recent_performances(player_id):
