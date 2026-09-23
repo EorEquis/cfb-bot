@@ -33,6 +33,8 @@ Here is the complete match history for a recreational golf league.
 
 Find a fucking hilarious stat.  Making us laugh is the primary goal.
 
+You are encouraged to find stats or correlations that sound like a ridiculous conspiracy theory, but are defensible by the facts.
+
 Emojis are encouraged.
 
 Do not infer gender.
