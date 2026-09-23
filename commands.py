@@ -19,6 +19,7 @@ from db._db import execute_query, execute_upsert
 from discord import app_commands
 from infrastructure.db_sync import sync_db
 from match._matches import (
+    get_completed_match_history,
     get_next_match,
     get_upcoming_matches,
     get_wrapup_data
@@ -248,33 +249,7 @@ def register_commands(
         )
 
         history_data = await asyncio.to_thread(
-            execute_query,
-            """
-            SELECT
-                match_id,
-                match_date,
-                location,
-                notes,
-                special_rule,
-                group_id,
-                players_in_group,
-                total_points,
-                ending_hole,
-                player_id,
-                player_name,
-                player_points,
-                group_winner,
-                match_winner,
-                pre_match_index,
-                match_performance,
-                net_handicap_credits
-            FROM vw_completed_match_results
-            ORDER BY
-                match_date,
-                match_id,
-                group_id,
-                player_name
-            """
+            get_completed_match_history
         )
 
         if not history_data:
@@ -1249,60 +1224,38 @@ def register_commands(
                     "Sportsbook Market": market
                 }
 
-        # Load completed-match history for players in the upcoming field.
-        player_history = {}
-
-        if player_names:
-            history_rows = await asyncio.to_thread(
-                execute_query,
-                """
-                SELECT
-                    player_name,
-                    match_id,
-                    match_date,
-                    player_points,
-                    match_performance,
-                    group_winner,
-                    match_winner
-                FROM vw_completed_match_results
-                WHERE player_name IN ({})
-                ORDER BY match_date, match_id
-                """.format(
-                    ",".join(["%s"] * len(player_names))
-                ),
-                tuple(player_names)
-            )
-
-            for row in history_rows:
-                player_history.setdefault(
-                    row["player_name"],
-                    []
-                ).append({
-                    "Match ID": row["match_id"],
-                    "Match Date": str(row["match_date"]),
-                    "Points": row["player_points"],
-                    "Match Performance": float(
-                        row["match_performance"]
-                    ),
-                    "Group Winner": bool(row["group_winner"]),
-                    "Match Winner": bool(row["match_winner"])
-                })
-
-        holder_rows = await asyncio.to_thread(
-            execute_query,
-            """
-            SELECT player_name
-            FROM vw_completed_match_results
-            WHERE match_winner = 1
-            ORDER BY match_date DESC, match_id DESC
-            LIMIT 1
-            """
+        # Load completed-match history and select what preview needs.
+        history_rows = await asyncio.to_thread(
+            get_completed_match_history
         )
 
-        current_holder = (
-            holder_rows[0]["player_name"]
-            if holder_rows
-            else None
+        player_history = {}
+
+        for row in history_rows:
+            if row["player_name"] not in player_names:
+                continue
+
+            player_history.setdefault(
+                row["player_name"],
+                []
+            ).append({
+                "Match ID": row["match_id"],
+                "Match Date": str(row["match_date"]),
+                "Points": row["player_points"],
+                "Match Performance": float(
+                    row["match_performance"]
+                ),
+                "Group Winner": bool(row["group_winner"]),
+                "Match Winner": bool(row["match_winner"])
+            })
+
+        current_holder = next(
+            (
+                row["player_name"]
+                for row in reversed(history_rows)
+                if row["match_winner"]
+            ),
+            None
         )
 
         match_date = match["match_date"]
