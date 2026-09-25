@@ -20,6 +20,7 @@ from match.wrapup import run_wrapup
 from tan_city.bookie import run_bookie
 from tan_city.gambler import run_gamblers
 from tan_city.settlement import run_settlement
+from utility.helpers import log_bot_usage
 from zoneinfo import ZoneInfo
 
 
@@ -249,6 +250,21 @@ async def db_sync_scheduler():
                             summary["bookie_net"],
                         )
 
+                    usage_id = await asyncio.to_thread(
+                        log_bot_usage,
+                        "wrapup",
+                        db_sync_scheduler.bot.user.id
+                    )
+
+                    chunks = await run_wrapup(usage_id)
+
+                    channel = db_sync_scheduler.bot.get_channel(
+                        db_sync_scheduler.channel_id
+                    )
+
+                    for chunk in chunks:
+                        await channel.send(chunk)
+                        
                 except Exception:
                     logger.exception("Tan City settlement failed")
 
