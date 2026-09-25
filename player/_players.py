@@ -12,15 +12,19 @@ from db._db import execute_query
 def get_current_cfb_holder():
     rows = execute_query(
         """
-        SELECT player_name
-        FROM vw_completed_match_results
-        WHERE match_winner = 1
-        ORDER BY match_date DESC, match_id DESC
+        SELECT
+            r.player_name,
+            p.discord_user_id
+        FROM vw_completed_match_results r
+        JOIN players p
+            ON p.id = r.player_id
+        WHERE r.match_winner = 1
+        ORDER BY r.match_date DESC, r.match_id DESC
         LIMIT 1
         """
     )
 
-    return rows[0]["player_name"] if rows else None
+    return rows[0] if rows else None
 
 
 def get_player_availability(match_id):

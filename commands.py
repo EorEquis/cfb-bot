@@ -1004,7 +1004,11 @@ def register_commands(
 
         power_data = {
             "Players": players,
-            "Current CFB Holder": current_holder
+            "Current CFB Holder": (
+                current_holder["player_name"]
+                if current_holder
+                else None
+            )
         }
 
         try:

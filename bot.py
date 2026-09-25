@@ -118,6 +118,7 @@ class CFBBot(discord.Client):
             db_sync_scheduler.bot = self
             db_sync_scheduler.admin_discord_id = ADMIN_DISCORD_ID
             db_sync_scheduler.channel_id = DEV_CHANNEL_ID
+            db_sync_scheduler.guild_id = GUILD_ID
             db_sync_scheduler.start()
             
         if not tan_city_balance_scheduler.is_running():
