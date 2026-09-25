@@ -8,11 +8,17 @@
 #           OpenAI model/version: GPT-5.6 Sol
 ###################
 
+import asyncio
 import json
 import os
 
 from datetime import datetime
-from match._matches import generate_match_broadcast
+from match._matches import generate_match_broadcast, get_wrapup_data
+from utility.helpers import (
+    mark_bot_usage_api_call,
+    split_discord_message,
+    update_bot_usage_tokens
+)
 
 MODEL = os.getenv("WRAPUP_MODEL", "gpt-5.6-luna")
 
@@ -62,3 +68,37 @@ End EXACTLY with:
 
     # Generate the recap using the shared match broadcast machinery.
     return await generate_match_broadcast(MODEL, prompt)
+
+
+async def run_wrapup(usage_id):
+    (
+        match_data,
+        player_notes,
+        david_gambling
+    ) = await asyncio.to_thread(
+        get_wrapup_data
+    )
+
+    match_data["Player Notes"] = player_notes
+
+    if david_gambling is not None:
+        match_data["David Gambling"] = david_gambling
+
+    await asyncio.to_thread(
+        mark_bot_usage_api_call,
+        usage_id
+    )
+
+    result = await generate_wrapup(match_data)
+
+    await asyncio.to_thread(
+        update_bot_usage_tokens,
+        usage_id,
+        result["input_tokens"],
+        result["output_tokens"]
+    )
+
+    return split_discord_message(
+        result["text"]
+    )
+    

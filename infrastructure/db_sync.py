@@ -7,11 +7,11 @@
 
 import os
 
+import infrastructure.sheets as sheets
 import mysql.connector
 import pandas as pd
 
-import infrastructure.sheets as sheets
-
+from db._db import execute_query
 
 MYSQL_HOST = os.getenv("MYSQL_HOST")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
@@ -49,6 +49,10 @@ def _read_benefits():
     ).copy()
 
 
+class MatchIDMismatchError(ValueError):
+    pass
+
+
 def sync_db():
     matches_df = sheets.get_matches()
     players_df = sheets.get_players()
@@ -70,30 +74,63 @@ def sync_db():
 
         # ---------- Load database lookup values ----------
 
-        cursor.execute(
-            """
-            SELECT id
-            FROM players
-            """
-        )
-
         valid_player_ids = {
-            row[0]
-            for row in cursor.fetchall()
+            row["id"]
+            for row in execute_query(
+                """
+                SELECT id
+                FROM players
+                """
+            )
         }
 
-        cursor.execute(
+        match_rows = execute_query(
             """
-            SELECT id
+            SELECT
+                id,
+                match_date
             FROM matches
             """
         )
 
         valid_match_ids = {
-            row[0]
-            for row in cursor.fetchall()
+            row["id"]
+            for row in match_rows
         }
 
+        match_ids_by_date = {
+            row["match_date"]: row["id"]
+            for row in match_rows
+        }
+
+        # ---------- Validate spreadsheet match IDs ----------
+
+        spreadsheet_matches = (
+            matches_df[["MatchID", "Match Date"]]
+            .dropna(subset=["MatchID", "Match Date"])
+            .drop_duplicates()
+        )
+
+        for _, row in spreadsheet_matches.iterrows():
+            match_id = int(row["MatchID"])
+            match_date = pd.to_datetime(
+                row["Match Date"]
+            ).date()
+
+            database_match_id = match_ids_by_date.get(
+                match_date
+            )
+
+            if (
+                database_match_id is not None
+                and match_id != database_match_id
+            ):
+                raise MatchIDMismatchError(
+                    f"Spreadsheet MatchID mismatch for {match_date}: "
+                    f"spreadsheet={match_id}, "
+                    f"database={database_match_id}"
+                )
+                
         # ---------- Build spreadsheet player mapping ----------
 
         player_ids_by_name = {}

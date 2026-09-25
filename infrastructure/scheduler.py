@@ -10,15 +10,16 @@
 import asyncio
 import datetime
 import logging
-import mysql.connector
-import os
 
 from db._db import execute_query, execute_upsert
 from discord.ext import tasks
-from infrastructure.db_sync import sync_db
+from infrastructure.db_sync import MatchIDMismatchError, sync_db
+from match.wrapup import run_wrapup
+from player._players import get_current_cfb_holder
 from tan_city.bookie import run_bookie
 from tan_city.gambler import run_gamblers
 from tan_city.settlement import run_settlement
+from utility.helpers import log_bot_usage
 from zoneinfo import ZoneInfo
 
 
@@ -41,6 +42,7 @@ DB_SYNC_FIXED_TIMES = {
 }
 
 _last_db_sync_minute = None
+_last_match_id_mismatch = None
 
 
 def _get_today_match_status(today):
@@ -80,6 +82,57 @@ def _rollover_gambler_balances():
         SET previous_balance = cycle_start_balance
         """
     )
+
+async def _sync_current_champion_role():
+    current_holder = await asyncio.to_thread(
+        get_current_cfb_holder
+    )
+
+    if current_holder is None:
+        return
+
+    guild = db_sync_scheduler.bot.get_guild(
+        db_sync_scheduler.guild_id
+    )
+
+    role = next(
+        (
+            role
+            for role in guild.roles
+            if role.name == "Current Champion"
+        ),
+        None
+    )
+
+    if role is None:
+        logger.error(
+            'Discord role "Current Champion" was not found'
+        )
+        return
+
+    champion_discord_id = current_holder["discord_user_id"]
+
+    for member in role.members:
+        if member.id != champion_discord_id:
+            await member.remove_roles(role)
+
+    champion = guild.get_member(champion_discord_id)
+
+    if champion is None:
+        logger.error(
+            "Current champion %s has no matching Discord guild member",
+            current_holder["player_name"]
+        )
+        return
+
+    if role not in champion.roles:
+        await champion.add_roles(role)
+
+    logger.info(
+        "Current Champion role synced to %s",
+        current_holder["player_name"]
+    )
+
         
 async def run_db_sync():
     logger.info("CFB database sync starting")
@@ -87,11 +140,15 @@ async def run_db_sync():
     try:
         await asyncio.to_thread(sync_db)
         logger.info("CFB database sync complete")
-        return True
+        return True, None
+
+    except MatchIDMismatchError as error:
+        logger.exception("CFB database sync blocked by MatchID mismatch")
+        return False, error
 
     except Exception:
         logger.exception("CFB database sync failed")
-        return False
+        return False, None
 
 
 # Run one complete Tan City betting cycle.
@@ -137,13 +194,17 @@ async def run_betting_cycle():
         logger.exception("Tan City betting cycle failed")
 
 
+
 # Check twice per minute so scheduled minute boundaries cannot be missed.
 # Actual database sync is limited to once per minute.
+
 @tasks.loop(seconds=30)
 async def db_sync_scheduler():
     global _last_db_sync_minute
+    global _last_match_id_mismatch
 
     now = datetime.datetime.now(CENTRAL_TIME)
+
     current_minute = now.replace(second=0, microsecond=0)
 
     if current_minute == _last_db_sync_minute:
@@ -191,7 +252,27 @@ async def db_sync_scheduler():
 
     _last_db_sync_minute = current_minute
 
-    sync_succeeded = await run_db_sync()
+    sync_succeeded, sync_error = await run_db_sync()
+
+    if sync_error is not None:
+        error_message = str(sync_error)
+
+        if error_message != _last_match_id_mismatch:
+            admin = await db_sync_scheduler.bot.fetch_user(
+                db_sync_scheduler.admin_discord_id
+            )
+
+            await admin.send(
+                "🚨 **CFB DATABASE SYNC BLOCKED**\n\n"
+                f"{error_message}\n\n"
+                "The spreadsheet and database disagree on the MatchID. "
+                "No spreadsheet data was synced."
+            )
+
+            _last_match_id_mismatch = error_message
+
+    elif sync_succeeded:
+        _last_match_id_mismatch = None
 
     # An aggressive sync that mirrors the completed match ends the one-minute
     # cycle. Run Tan City settlement immediately after that successful sync.
@@ -207,6 +288,8 @@ async def db_sync_scheduler():
 
             if match_winner_count == 1:
                 try:
+                    await _sync_current_champion_role()
+
                     summaries = await asyncio.to_thread(run_settlement)
 
                     for summary in summaries:
@@ -222,8 +305,28 @@ async def db_sync_scheduler():
                             summary["bookie_net"],
                         )
 
+                    usage_id = await asyncio.to_thread(
+                        log_bot_usage,
+                        "wrapup",
+                        db_sync_scheduler.bot.user.id
+                    )
+
+                    chunks = await run_wrapup(usage_id)
+
+                    channel = db_sync_scheduler.bot.get_channel(
+                        db_sync_scheduler.channel_id
+                    )
+
+                    for chunk in chunks:
+                        await channel.send(chunk)
+                        
                 except Exception:
                     logger.exception("Tan City settlement failed")
+
+
+@db_sync_scheduler.before_loop
+async def before_db_sync_scheduler():
+    await db_sync_scheduler.bot.wait_until_ready()
 
 
 # Preserve the previous Tan City cycle's starting balances before
