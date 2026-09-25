@@ -115,6 +115,8 @@ class CFBBot(discord.Client):
         
         # Start scheduled background jobs once during bot startup.
         if not db_sync_scheduler.is_running():
+            db_sync_scheduler.bot = self
+            db_sync_scheduler.admin_discord_id = ADMIN_DISCORD_ID
             db_sync_scheduler.start()
             
         if not tan_city_balance_scheduler.is_running():

@@ -15,7 +15,7 @@ import os
 
 from db._db import execute_query, execute_upsert
 from discord.ext import tasks
-from infrastructure.db_sync import sync_db
+from infrastructure.db_sync import MatchIDMismatchError, sync_db
 from tan_city.bookie import run_bookie
 from tan_city.gambler import run_gamblers
 from tan_city.settlement import run_settlement
@@ -41,6 +41,7 @@ DB_SYNC_FIXED_TIMES = {
 }
 
 _last_db_sync_minute = None
+_last_match_id_mismatch = None
 
 
 def _get_today_match_status(today):
@@ -87,11 +88,15 @@ async def run_db_sync():
     try:
         await asyncio.to_thread(sync_db)
         logger.info("CFB database sync complete")
-        return True
+        return True, None
+
+    except MatchIDMismatchError as error:
+        logger.exception("CFB database sync blocked by MatchID mismatch")
+        return False, error
 
     except Exception:
         logger.exception("CFB database sync failed")
-        return False
+        return False, None
 
 
 # Run one complete Tan City betting cycle.
@@ -142,6 +147,7 @@ async def run_betting_cycle():
 @tasks.loop(seconds=30)
 async def db_sync_scheduler():
     global _last_db_sync_minute
+    global _last_match_id_mismatch
 
     now = datetime.datetime.now(CENTRAL_TIME)
     current_minute = now.replace(second=0, microsecond=0)
@@ -191,7 +197,27 @@ async def db_sync_scheduler():
 
     _last_db_sync_minute = current_minute
 
-    sync_succeeded = await run_db_sync()
+    sync_succeeded, sync_error = await run_db_sync()
+
+    if sync_error is not None:
+        error_message = str(sync_error)
+
+        if error_message != _last_match_id_mismatch:
+            admin = await db_sync_scheduler.bot.fetch_user(
+                db_sync_scheduler.admin_discord_id
+            )
+
+            await admin.send(
+                "🚨 **CFB DATABASE SYNC BLOCKED**\n\n"
+                f"{error_message}\n\n"
+                "The spreadsheet and database disagree on the MatchID. "
+                "No spreadsheet data was synced."
+            )
+
+            _last_match_id_mismatch = error_message
+
+    elif sync_succeeded:
+        _last_match_id_mismatch = None
 
     # An aggressive sync that mirrors the completed match ends the one-minute
     # cycle. Run Tan City settlement immediately after that successful sync.
