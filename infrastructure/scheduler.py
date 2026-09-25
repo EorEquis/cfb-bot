@@ -16,6 +16,7 @@ import os
 from db._db import execute_query, execute_upsert
 from discord.ext import tasks
 from infrastructure.db_sync import MatchIDMismatchError, sync_db
+from match.wrapup import run_wrapup
 from tan_city.bookie import run_bookie
 from tan_city.gambler import run_gamblers
 from tan_city.settlement import run_settlement

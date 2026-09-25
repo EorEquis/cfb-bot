@@ -26,11 +26,10 @@ from infrastructure.db_sync import sync_db
 from match._matches import (
     get_completed_match_history,
     get_next_match,
-    get_upcoming_matches,
-    get_wrapup_data
+    get_upcoming_matches
 )
 from match.preview import generate_preview
-from match.wrapup import generate_wrapup
+from match.wrapup import run_wrapup
 from player._players import (
     get_current_cfb_holder,
     get_player_availability,
@@ -2088,36 +2087,7 @@ def register_commands(
         )
 
         try:
-            (
-                match_data,
-                player_notes,
-                david_gambling
-            ) = await asyncio.to_thread(
-                get_wrapup_data
-            )
-
-            match_data["Player Notes"] = player_notes
-
-            if david_gambling is not None:
-                match_data["David Gambling"] = david_gambling
-
-            await asyncio.to_thread(
-                mark_bot_usage_api_call,
-                usage_id
-            )
-
-            result = await generate_wrapup(match_data)
-
-            recap = result["text"]
-
-            await asyncio.to_thread(
-                update_bot_usage_tokens,
-                usage_id,
-                result["input_tokens"],
-                result["output_tokens"]
-            )
-
-            chunks = split_discord_message(recap)
+            chunks = await run_wrapup(usage_id)
 
             await interaction.delete_original_response()
 
