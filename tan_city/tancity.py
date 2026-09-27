@@ -20,6 +20,7 @@ from openai import AsyncOpenAI
 client = AsyncOpenAI()
 
 MODEL = os.getenv("TAN_CITY_MODEL", "gpt-5.6-luna")
+MODEL_REASONING = os.getenv("MODEL_REASONING", "low")
 
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
 MYSQL_HOST = os.getenv("MYSQL_HOST")
@@ -170,6 +171,7 @@ POST-MATCH WAGER RESULTS:
 
     response = await client.responses.create(
         model=MODEL,
+        reasoning={"effort": MODEL_REASONING},
         input=prompt,
     )
 

@@ -18,6 +18,7 @@ from openai import AsyncOpenAI
 client = AsyncOpenAI()
 
 MODEL = os.getenv("DAILYSTAT_MODEL", "gpt-5.6-luna")
+MODEL_REASONING = os.getenv("MODEL_REASONING", "low")
 
 
 async def generate_dailystat(history_data, previous_responses):
@@ -54,6 +55,7 @@ CFB MATCH HISTORY:
 
     response = await client.responses.create(
         model=MODEL,
+        reasoning={"effort": MODEL_REASONING},
         input=prompt
     )
 
