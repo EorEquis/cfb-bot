@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 CONCURRENT_GAMBLERS = int(os.getenv("CONCURRENT_GAMBLERS", "10"))
 MODEL = os.getenv("GAMBLER_MODEL", "gpt-5.6-sol")
+MODEL_REASONING = os.getenv("MODEL_REASONING", "low")
 MYSQL_HOST = os.getenv("MYSQL_HOST")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
@@ -529,6 +530,7 @@ async def generate_decisions(gambler_data_list):
 
     response = await client.responses.create(
         model=MODEL,
+        reasoning={"effort": MODEL_REASONING},
         input=prompt,
     )
 
