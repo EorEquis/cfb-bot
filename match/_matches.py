@@ -6,16 +6,21 @@
 #           OpenAI model/version: GPT-5.6 Sol
 ###################
 
+import os
+
 from db._db import execute_query
 from openai import AsyncOpenAI
 
 
 client = AsyncOpenAI()
 
+MODEL_REASONING = os.getenv("MODEL_REASONING", "low")
+
 
 async def generate_match_broadcast(model, prompt):
     response = await client.responses.create(
         model=model,
+        reasoning={"effort": MODEL_REASONING},
         input=prompt
     )
 
