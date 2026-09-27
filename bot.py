@@ -54,6 +54,7 @@ if not ADMIN_ROLE_ID or not ADMIN_ROLE_ID.isdigit():
 ADMIN_ROLE_ID = int(ADMIN_ROLE_ID)
 BOT_VERSION = os.getenv("BOT_VERSION")
 DEV_CHANNEL_ID = int(os.getenv("DEV_CHANNEL_ID"))
+GENERAL_CHANNEL_ID = int(os.getenv("GENERAL_CHANNEL_ID"))
 GUILD_ID = int(os.getenv("GUILD_ID"))
 MYSQL_HOST = os.getenv("MYSQL_HOST")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
@@ -117,7 +118,7 @@ class CFBBot(discord.Client):
         if not db_sync_scheduler.is_running():
             db_sync_scheduler.bot = self
             db_sync_scheduler.admin_discord_id = ADMIN_DISCORD_ID
-            db_sync_scheduler.channel_id = DEV_CHANNEL_ID
+            db_sync_scheduler.channel_id = GENERAL_CHANNEL_ID
             db_sync_scheduler.guild_id = GUILD_ID
             db_sync_scheduler.start()
             
