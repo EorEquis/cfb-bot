@@ -12,6 +12,7 @@ import os
 from openai import AsyncOpenAI
 
 MODEL = os.getenv("POWER_MODEL", "gpt-5.6-luna")
+MODEL_REASONING = os.getenv("MODEL_REASONING", "low")
 
 # Create the shared asynchronous OpenAI client used for power ranking requests.
 client = AsyncOpenAI()
@@ -83,6 +84,7 @@ DATA:
     # Submit the completed prompt and wait asynchronously for the model response.
     response = await client.responses.create(
         model=MODEL,
+        reasoning={"effort": MODEL_REASONING},
         input=prompt
     )
 
