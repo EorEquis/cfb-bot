@@ -23,6 +23,7 @@ from player._players import get_player_availability
 
 
 MODEL = os.getenv("BOOKIE_MODEL", "gpt-5.6-sol")
+MODEL_REASONING = os.getenv("MODEL_REASONING", "low")
 MYSQL_HOST = os.getenv("MYSQL_HOST")
 MYSQL_PORT = int(os.getenv("MYSQL_PORT", "3306"))
 MYSQL_DATABASE = os.getenv("MYSQL_DATABASE")
@@ -330,6 +331,7 @@ async def generate_odds(bookie_data):
 
     response = await client.responses.create(
         model=MODEL,
+        reasoning={"effort": MODEL_REASONING},
         input=prompt,
     )
 
